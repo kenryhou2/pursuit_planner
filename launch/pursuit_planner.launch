@@ -1,0 +1,43 @@
+<launch>
+  <!--
+    Args so you can override from command line, e.g.:
+
+      roslaunch pursuit_planner pursuit_planner.launch \
+        map_file:=$(find pursuit_planner)/maps/map4.txt \
+        dyno_yaml:=$(find pursuit_planner)/config/dyno_map4.yaml \
+        catch_threshold:=1.0
+  -->
+  <arg name="map_file"        default="$(find pursuit_planner)/maps/map3.txt" />
+  <arg name="dyno_yaml"       default="$(find pursuit_planner)/config/dyno_map3.yaml" />
+  <arg name="catch_threshold" default="0.5" />
+
+  <!-- Optional: namespace for the planner -->
+  <arg name="planner_ns" default="pursuit_planner" />
+
+  <!-- Planner node: uses private NodeHandle "~" in code -->
+  <node pkg="pursuit_planner"
+        type="pursuit_planner_node"
+        name="pursuit_planner_node"
+        ns="$(arg planner_ns)"
+        output="screen">
+
+    <!-- These map to nh_("~") params in PlannerNode -->
+    <param name="map_file"        value="$(arg map_file)" />
+    <param name="dyno_yaml"       value="$(arg dyno_yaml)" />
+    <param name="catch_threshold" value="$(arg catch_threshold)" />
+
+    <!--
+      Subscribed topics (in this namespace):
+        robot_pose    : geometry_msgs/Pose2D
+        target_traj   : std_msgs/Int32MultiArray
+        target_pose   : geometry_msgs/Pose2D
+
+      Published topics:
+        next_waypoint : geometry_msgs/Pose2D
+        planner_status: std_msgs/String
+        target_caught : std_msgs/Bool
+        /dynamic_obstacles/<id>/pose : geometry_msgs/Pose2D (global namespace!)
+    -->
+
+  </node>
+</launch>

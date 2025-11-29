@@ -1,0 +1,38 @@
+dynamic_obstacles:
+  - id: obs0
+    footprint:
+      kind: circle
+      radius: 25
+    waypoints:
+      - x: 10
+        y: 5
+        duration: 0
+      - x: 200
+        y: 5
+        duration: 100
+      - x: 200
+        y: 300
+        duration: 100
+      - x: 20
+        y: 10
+        duration: 100
+
+  - id: obs1
+    footprint:
+      kind: box
+      width: 30
+      height: 20
+    waypoints:
+      - x: 30
+        y: 14
+        duration: 0
+      - x: 200
+        y: 160
+        duration: 100
+      - x: 400
+        y: 160
+        duration: 100
+      - x: 10
+        y: 16
+        duration: 100
+

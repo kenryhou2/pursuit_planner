@@ -3,6 +3,7 @@
  * planner.cpp
  *
  *=================================================================*/
+#include <ros/ros.h>  
 #include "pursuit_planner/planner.h"
 #include <math.h>
 #include <iostream>
@@ -32,9 +33,10 @@ int dY[NUMOFDIRS + 1] = {-1,  0,  1, -1,  1, -1, 0, 1, 0};
 
 // Global state management
 struct PlannerState {
+    vector<vector<vector<bool>>> occupancyGrid;
     vector<int> robotToAllCosts;
     vector<int> goalToAllCosts;
-    int* timeSteps;
+    int* timeSteps;                                             //array of timesteps?
     bool initialized;
     int gridWidth, gridHeight, obstacleThreshold;
     int* terrainMap;
@@ -48,6 +50,19 @@ struct PlannerState {
             delete[] timeSteps;
             timeSteps = nullptr;
         }
+        // clear search cost vectors
+        robotToAllCosts.clear();
+        goalToAllCosts.clear();
+
+        // we do NOT delete terrainMap (owned by caller)
+        // we also typically keep occupancyGrid as-is;
+        // or you can clear it if you want to force a fresh copy each time:
+        // occupancyGrid.clear();
+
+        gridWidth  = 0;
+        gridHeight = 0;
+        obstacleThreshold = 0;
+        initialized = false;
     }
 };
 
@@ -119,6 +134,10 @@ vector<int> backwardHeuristicSearch(int goalX, int goalY, int curr_time, int tar
     HeuristicState goal_state(goalX, goalY, 0, 0);
     const int goal_idx = GETMAPINDEX(goalX, goalY, globalState.gridWidth, globalState.gridHeight);
     distance_values[goal_idx] = 0;
+
+
+    // ensure timeSteps is also set for goal cell
+    globalState.timeSteps[goal_idx] = 0;
     
     // heap operations
     search_heap.push_back(goal_state);
@@ -171,14 +190,15 @@ vector<int> backwardHeuristicSearch(int goalX, int goalY, int curr_time, int tar
     return distance_values;
 }
 
+// Start coordinates are run with current robot position
 GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, int current_time, int time_limit) {
     const int total_cells = globalState.gridWidth * globalState.gridHeight;
     
     // heap-based search data structures
     vector<int> actual_costs(total_cells, -1);
     vector<bool> visited(total_cells, false);
-    vector<PathNode> frontier_heap;
-    vector<PathNode> path_history;
+    vector<PathNode> frontier_heap; //priority queue
+    vector<PathNode> path_history; //for backtracking
     
     // initialize start node
     const int start_idx = GETMAPINDEX(start_x, start_y, globalState.gridWidth, globalState.gridHeight);
@@ -221,6 +241,7 @@ GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, i
                 if (move_cost >= globalState.obstacleThreshold) continue;
                 if (visited[next_idx]) continue;
                 
+                // Check and Update g-value of successor
                 const int total_cost = current_node.getCost() + move_cost;
                 
                 if (actual_costs[next_idx] == -1 || total_cost < actual_costs[next_idx]) {
@@ -282,6 +303,7 @@ GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, i
 
 void planner(
     int* map,
+    const std::vector<std::vector<std::vector<bool>>>& occ3D,
     int collision_thresh,
     int x_size,
     int y_size,
@@ -295,14 +317,55 @@ void planner(
     int* action_ptr
 )
 {
+    // ROS_INFO_STREAM("Calling instance of planner");
+    if (!map) {
+        ROS_ERROR("planner(): map pointer is null");
+        return;
+    }
+    if (!target_traj) {
+        ROS_ERROR("planner(): target_traj pointer is null");
+        return;
+    }
+    if (!action_ptr) {
+        ROS_ERROR("planner(): action_ptr pointer is null");
+        return;
+    }
+    if (x_size <= 0 || y_size <= 0) {
+        ROS_ERROR("planner(): invalid grid size");
+        return;
+    }
+    if (target_steps <= 0) {
+        ROS_ERROR("planner(): target_steps <= 0");
+        return;
+    }
+    if (curr_time < 0 || curr_time >= target_steps) {
+        ROS_ERROR_STREAM("planner(): curr_time " << curr_time
+                         << " out of [0," << target_steps << ")");
+        return;
+    }
+
+    if (occ3D.empty()) {
+        ROS_WARN("planner(): occ3D is empty");
+    }
     // setup environment parameters
+    globalState.cleanup();
     globalState.gridWidth = x_size;
     globalState.gridHeight = y_size;
     globalState.obstacleThreshold = collision_thresh;
     globalState.terrainMap = map;
+    globalState.occupancyGrid = occ3D;
+
+    // allocate and initialize timeSteps
+    const int total_cells = x_size * y_size;
+    globalState.timeSteps = new int[total_cells];
+    for (int i = 0; i < total_cells; ++i) {
+        // "infinite" time means unreachable
+        globalState.timeSteps[i] = std::numeric_limits<int>::max();
+    }
    
+    // ROS_INFO_STREAM("planner(): environment parameters set");
     // allocate timing array and setup goal candidates
-    globalState.timeSteps = new int[x_size * y_size];
+    globalState.timeSteps = new int[x_size * y_size]; //stores earliest times to reach each cell in the map.
     vector<tuple<int, int, double, int>> candidate_interceptions;
     
     static int selected_goal_x, selected_goal_y, time_horizon;
@@ -324,14 +387,32 @@ void planner(
             bool valid_path = (globalState.robotToAllCosts[cell_index] > -1);
             
             if (reachable && valid_path) {
-                int delay_time = i - globalState.timeSteps[cell_index];
+                int delay_time = i - globalState.timeSteps[cell_index]; // waiting time of cell for target to arrive if robot arrives to cell ahead of time.
                 int wait_cost = delay_time * map[cell_index];
-                double total_cost = globalState.robotToAllCosts[cell_index] + wait_cost;
+                double total_cost = globalState.robotToAllCosts[cell_index] + wait_cost; // total cost to intercept target at this cell
                 
                 candidate_interceptions.push_back(make_tuple(pos_x, pos_y, total_cost, i));
             }
         }
         
+        if (candidate_interceptions.empty()) {
+            // No valid interception found – safe fallback
+            // std::cerr << "planner(): no valid interception candidates found; "
+            //         << "robot will stay in place at ("
+            //         << robotposeX << "," << robotposeY << ") for this step."
+            //         << std::endl;
+
+            // Optional: clean up timeSteps
+            if (globalState.timeSteps) {
+                delete[] globalState.timeSteps;
+                globalState.timeSteps = nullptr;
+            }
+
+            // Just stay put
+            action_ptr[0] = robotposeX;
+            action_ptr[1] = robotposeY;
+            return;
+        }
         // select minimum cost interception from candidates
         auto best_option = *min_element(candidate_interceptions.begin(), candidate_interceptions.end(),
             [](const auto& a, const auto& b) { return get<2>(a) < get<2>(b); });
@@ -345,10 +426,14 @@ void planner(
         time_horizon = globalState.timeSteps[goal_cell];
         globalState.maxTimeHorizon = time_horizon;
         
+        // Update heuristic from goal to all cells
         globalState.goalToAllCosts = backwardHeuristicSearch(selected_goal_x, selected_goal_y, curr_time, time_horizon);
+        // ROS_INFO_STREAM("Planner selected interception goal at ("
+        //                 << selected_goal_x << "," << selected_goal_y
+        //                 << ") with time horizon " << time_horizon);
     }
    
-   
+    // For t>=0, compute next action towards selected goal
     // handle destination reached case
     if ((robotposeX == selected_goal_x) && (robotposeY == selected_goal_y)) {
         action_ptr[0] = robotposeX;

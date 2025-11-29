@@ -1,9 +1,11 @@
 #ifndef PLANNER_H
 #define PLANNER_H
+#include <vector>
 
 // Declare the plan function
 void planner(
     int* map,
+    const std::vector<std::vector<std::vector<bool>>>& occ3D,
     int collision_thresh,
     int x_size,
     int y_size,

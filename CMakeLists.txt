@@ -12,6 +12,8 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   roscpp
   std_msgs
+  rospack
+  roslib
 )
 
 ## System dependencies are found with CMake's conventions
@@ -106,7 +108,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES pursuit_planner
-#  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp std_msgs
+ CATKIN_DEPENDS geometry_msgs nav_msgs roscpp std_msgs rospack roslib
 #  DEPENDS system_lib
 )
 
@@ -159,9 +161,11 @@ add_executable(pursuit_planner_node
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
 # )
+find_package(yaml-cpp REQUIRED)
 
 target_link_libraries(pursuit_planner_node
   pursuit_planner_lib
+  yaml-cpp
   ${catkin_LIBRARIES}
 )
 #############
@@ -182,7 +186,10 @@ install(TARGETS pursuit_planner_lib pursuit_planner_node
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
 
-install(DIRECTORY include/${PROJECT_NAME}/
+install(DIRECTORY 
+  config
+  maps
+  include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
 )
 
