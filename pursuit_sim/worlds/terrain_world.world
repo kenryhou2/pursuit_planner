@@ -15,7 +15,7 @@
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>473 436 15.0</size>
+              <size>473 436 5.0</size>
               <pos>0 0 0</pos>
             </heightmap>
           </geometry>
@@ -25,7 +25,7 @@
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>473 436 15.0</size>
+              <size>473 436 5.0</size>
               <pos>0 0 0</pos>
 
               <!-- IMPORTANT: add a valid texture so we don't get the checkerboard -->
