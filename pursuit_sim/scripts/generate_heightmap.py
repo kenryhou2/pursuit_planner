@@ -110,13 +110,16 @@ def pad_costmap_for_heightmap(arr: np.ndarray) -> np.ndarray:
 
 def costmap_to_heightmap_png(costmap: np.ndarray,
                              out_path: str = "heightmap.png",
-                             max_height: float = 5.0):
+                             max_height: float = 5.0,
+                             bit_depth: int = 8):
     """
-    Convert a 2D costmap array into a 16-bit PNG suitable for Gazebo heightmap.
+    Convert a 2D costmap array into a PNG suitable for Gazebo heightmap.
 
     - Pads to square 2^n+1 × 2^n+1
-    - Normalizes cost range [c_min, c_max] to height [0, max_height]
-    - Encodes as 16-bit grayscale (I;16)
+    - Normalizes cost range [c_min, c_max] to [0, 1]
+    - Encodes as either:
+        * 8-bit grayscale (mode 'L') if bit_depth == 8  [RECOMMENDED]
+        * 16-bit grayscale (mode 'I;16') if bit_depth == 16
     """
     # 1) Pad to square with side length 2^n + 1
     arr = np.array(costmap, dtype=np.float32)
@@ -125,21 +128,28 @@ def costmap_to_heightmap_png(costmap: np.ndarray,
     c_min, c_max = float(arr.min()), float(arr.max())
 
     if c_max > c_min:
-        norm = (arr - c_min) / (c_max - c_min)
+        norm = (arr - c_min) / (c_max - c_min)   # 0..1
     else:
         norm = np.zeros_like(arr)
-
-    height = norm * max_height
-    img16 = (height / max_height * 65535.0).clip(0, 65535).astype(np.uint16)
 
     out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    img = Image.fromarray(img16, mode="I;16")
+    if bit_depth == 16:
+        # 16-bit grayscale
+        img_vals = (norm * 65535.0).clip(0, 65535).astype(np.uint16)
+        img = Image.fromarray(img_vals, mode="I;16")
+    else:
+        # 8-bit grayscale (default / safer for Gazebo)
+        img_vals = (norm * 255.0).clip(0, 255).astype(np.uint8)
+        img = Image.fromarray(img_vals, mode="L")
+
     img.save(out_path)
     print(f"[heightmap] Saved {out_path}, padded shape={arr.shape}, "
-          f"cost range [{c_min}, {c_max}], height [0, {max_height}] m")
+          f"bit_depth={bit_depth}, cost range [{c_min}, {c_max}], "
+          f"height [0, {max_height}] m (via <size> in world)")
+
 
 
 def write_world_with_inlined_heightmap(world_path: str,
@@ -147,13 +157,15 @@ def write_world_with_inlined_heightmap(world_path: str,
                                        x_size: int,
                                        y_size: int,
                                        max_height: float,
-                                       model_name: str = "terrain_from_map"):
+                                       model_name: str = "terrain_from_map",
+                                       color_rgb=(0.5, 0.5, 0.5)):
     """
     Create a Gazebo world that inlines a heightmap model referencing the given PNG.
 
     - The heightmap image itself is square 2^n+1×2^n+1.
     - <size> in SDF is the physical size in meters that the image spans.
       We set it to (x_size, y_size, max_height) so it matches your planner grid.
+    - color_rgb: (R,G,B) floats in [0,1] for the visual material.
     """
     world_dir = os.path.dirname(world_path)
     if world_dir:
@@ -161,6 +173,8 @@ def write_world_with_inlined_heightmap(world_path: str,
 
     png_abs = os.path.abspath(png_path)
     png_uri = f"file://{png_abs}"
+
+    r, g, b = color_rgb
 
     world_xml = textwrap.dedent(f"""\
         <?xml version="1.0" ?>
@@ -175,6 +189,7 @@ def write_world_with_inlined_heightmap(world_path: str,
             <model name="{model_name}">
               <static>true</static>
               <link name="terrain_link">
+
                 <collision name="terrain_collision">
                   <geometry>
                     <heightmap>
@@ -191,27 +206,50 @@ def write_world_with_inlined_heightmap(world_path: str,
                       <uri>{png_uri}</uri>
                       <size>{x_size} {y_size} {max_height}</size>
                       <pos>0 0 0</pos>
+
+                      <!-- IMPORTANT: add a valid texture so we don't get the checkerboard -->
+                      <texture>
+                        <diffuse>file://media/materials/textures/dirt_diffusespecular.png</diffuse>
+                        <normal>file://media/materials/textures/flat_normal.png</normal>
+                        <size>10</size>
+                      </texture>
+
+                      <!-- Single blend layer (no fancy multi-texture) -->
+                      <blend>
+                        <min_height>0.0</min_height>
+                        <fade_dist>1.0</fade_dist>
+                      </blend>
                     </heightmap>
                   </geometry>
+
+                  <!-- Tint on top of the heightmap texture -->
+                  <material>
+                    <ambient>{r} {g} {b} 1</ambient>
+                    <diffuse>{r} {g} {b} 1</diffuse>
+                    <specular>0.1 0.1 0.1 1</specular>
+                    <emissive>0 0 0 1</emissive>
+                  </material>
                 </visual>
+
               </link>
             </model>
 
           </world>
         </sdf>
     """)
-
     with open(world_path, "w") as f:
         f.write(world_xml)
     print(f"[world] Wrote {world_path}")
     print(f"[world] Heightmap URI: {png_uri}")
+    print(f"[world] Color (RGB): {r}, {g}, {b}")
+
 
 
 # =========================
 # main()
 # =========================
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Convert planner map txt into a Gazebo heightmap PNG and world file."
     )
@@ -229,7 +267,26 @@ def main():
     parser.add_argument("--model_name",
                         default="terrain_from_map",
                         help="Name of the inlined model in the world (default: terrain_from_map)")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--color",
+        nargs=3,
+        type=float,
+        metavar=("R", "G", "B"),
+        default=[0.7, 0.7, 0.7],
+        help="RGB color for the terrain visual (0–1 each).",
+    )
+    parser.add_argument(
+        "--bit_depth",
+        choices=[8, 16],
+        type=int,
+        default=16,
+        help="PNG bit depth: 8 or 16 (default: 16)",
+    )
+
+    # IMPORTANT: ignore unknown ROS args (__name, __log, etc.)
+    if argv is None:
+        argv = []
+    args, unknown = parser.parse_known_args(argv)
 
     # 1) Parse map
     x_size, y_size, _, _, _, _, costmap = parse_mapfile(args.map_file)
@@ -238,16 +295,18 @@ def main():
     # 2) Generate heightmap PNG (with square 2^n+1 padding)
     costmap_to_heightmap_png(costmap,
                              out_path=args.heightmap_png,
-                             max_height=args.max_height)
+                             max_height=args.max_height,
+                             bit_depth=args.bit_depth)
 
     # 3) Generate world file that inlines the heightmap
     write_world_with_inlined_heightmap(
         world_path=args.world_path,
         png_path=args.heightmap_png,
-        x_size=x_size,       # physical X extent (meters)
-        y_size=y_size,       # physical Y extent (meters)
+        x_size=x_size,
+        y_size=y_size,
         max_height=args.max_height,
-        model_name=args.model_name
+        model_name=args.model_name,
+        color_rgb=args.color,
     )
 
     print("\n[done]")
@@ -255,5 +314,9 @@ def main():
     print(f"  roslaunch gazebo_ros empty_world.launch \\")
     print(f"    world_name:={os.path.abspath(args.world_path)}")
 
+
 if __name__ == "__main__":
-    main()
+    import sys
+    # pass only *our* args to argparse, skip ROS extras
+    main(sys.argv[1:])
+

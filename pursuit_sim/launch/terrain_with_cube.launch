@@ -1,0 +1,45 @@
+<launch>
+  <!-- Paths -->
+  <arg name="map_file"
+       default="$(find pursuit_planner)/maps/map3.txt" />
+  <arg name="heightmap_png"
+       default="$(find pursuit_sim)/worlds/heightmap_map3.png" />
+  <arg name="world_path"
+       default="$(find pursuit_sim)/worlds/terrain_world.world" />
+
+  <!-- 1) Generate heightmap + world BEFORE / ALONGSIDE Gazebo -->
+  <node name="generate_heightmap"
+        pkg="pursuit_sim"
+        type="generate_heightmap.py"
+        output="screen"
+        respawn="false"
+        clear_params="false"
+        args="$(arg map_file)
+              --heightmap_png=$(arg heightmap_png)
+              --world_path=$(arg world_path)
+              --max_height=5.0">
+    <!-- IMPORTANT: do NOT set required="true" here -->
+  </node>
+
+  <!-- 2) Start Gazebo with that world -->
+  <node name="gazebo"
+        pkg="gazebo_ros"
+        type="gzserver"
+        args="-e ode $(arg world_path)"
+        output="screen" />
+
+  <node name="gazebo_gui"
+        pkg="gazebo_ros"
+        type="gzclient"
+        output="screen" />
+
+  <!-- 3) Spawn cube robot model -->
+  <node name="spawn_cube_robot"
+        pkg="gazebo_ros"
+        type="spawn_model"
+        output="screen"
+        args="-sdf
+              -file $(find pursuit_sim)/models/cube_robot/model.sdf
+              -model cube_robot
+              -x 5.0 -y 5.0 -z 2.0 -Y 0.0"/>
+</launch>

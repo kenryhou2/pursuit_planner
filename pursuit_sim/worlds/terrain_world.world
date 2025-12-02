@@ -10,11 +10,12 @@
     <model name="terrain_from_map">
       <static>true</static>
       <link name="terrain_link">
+
         <collision name="terrain_collision">
           <geometry>
             <heightmap>
-              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map6.png</uri>
-              <size>200 200 20.0</size>
+              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
+              <size>473 436 15.0</size>
               <pos>0 0 0</pos>
             </heightmap>
           </geometry>
@@ -23,12 +24,34 @@
         <visual name="terrain_visual">
           <geometry>
             <heightmap>
-              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map6.png</uri>
-              <size>200 200 20.0</size>
+              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
+              <size>473 436 15.0</size>
               <pos>0 0 0</pos>
+
+              <!-- IMPORTANT: add a valid texture so we don't get the checkerboard -->
+              <texture>
+                <diffuse>file://media/materials/textures/dirt_diffusespecular.png</diffuse>
+                <normal>file://media/materials/textures/flat_normal.png</normal>
+                <size>10</size>
+              </texture>
+
+              <!-- Single blend layer (no fancy multi-texture) -->
+              <blend>
+                <min_height>0.0</min_height>
+                <fade_dist>1.0</fade_dist>
+              </blend>
             </heightmap>
           </geometry>
+
+          <!-- Tint on top of the heightmap texture -->
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+            <emissive>0 0 0 1</emissive>
+          </material>
         </visual>
+
       </link>
     </model>
 
