@@ -13,6 +13,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <algorithm>
+#include <string>
 using namespace std;
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y-1)*XSIZE + (X-1))
@@ -33,7 +34,7 @@ int dY[NUMOFDIRS + 1] = {-1,  0,  1, -1,  1, -1, 0, 1, 0};
 
 // Global state management
 struct PlannerState {
-    vector<vector<vector<bool>>> occupancyGrid;
+    CompactDynamicObstacles compactObstacles;
     vector<int> robotToAllCosts;
     vector<int> goalToAllCosts;
     int* timeSteps;                                             //array of timesteps?
@@ -50,19 +51,6 @@ struct PlannerState {
             delete[] timeSteps;
             timeSteps = nullptr;
         }
-        // clear search cost vectors
-        robotToAllCosts.clear();
-        goalToAllCosts.clear();
-
-        // we do NOT delete terrainMap (owned by caller)
-        // we also typically keep occupancyGrid as-is;
-        // or you can clear it if you want to force a fresh copy each time:
-        // occupancyGrid.clear();
-
-        gridWidth  = 0;
-        gridHeight = 0;
-        obstacleThreshold = 0;
-        initialized = false;
     }
 };
 
@@ -134,10 +122,6 @@ vector<int> backwardHeuristicSearch(int goalX, int goalY, int curr_time, int tar
     HeuristicState goal_state(goalX, goalY, 0, 0);
     const int goal_idx = GETMAPINDEX(goalX, goalY, globalState.gridWidth, globalState.gridHeight);
     distance_values[goal_idx] = 0;
-
-
-    // ensure timeSteps is also set for goal cell
-    globalState.timeSteps[goal_idx] = 0;
     
     // heap operations
     search_heap.push_back(goal_state);
@@ -145,6 +129,7 @@ vector<int> backwardHeuristicSearch(int goalX, int goalY, int curr_time, int tar
         return a.cost > b.cost;
     });
     
+    int cells_explored = 0;
     while (!search_heap.empty()) {
         // extract minimum
         pop_heap(search_heap.begin(), search_heap.end(), [](const HeuristicState& a, const HeuristicState& b) {
@@ -158,6 +143,7 @@ vector<int> backwardHeuristicSearch(int goalX, int goalY, int curr_time, int tar
         if (!processed[current_idx]) {
             processed[current_idx] = true;
             distance_values[current_idx] = current_node.cost;
+            cells_explored++;
             
             // check all 8 directions
             for (int direction = 0; direction < 8; ++direction) {
@@ -211,6 +197,10 @@ GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, i
     });
     actual_costs[start_idx] = 0;
     
+    int nodes_expanded = 0;
+    int obstacle_collisions = 0;
+    int static_collisions = 0;
+    
     // main a* search loop
     bool destination_reached = false;
     while (!frontier_heap.empty() && !destination_reached) {
@@ -226,6 +216,7 @@ GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, i
         if (!visited[current_idx]) {
             visited[current_idx] = true;
             path_history.push_back(current_node);
+            nodes_expanded++;
             
             // explore all 9 directions (including staying in place)
             for (int move_dir = 0; move_dir < 9; ++move_dir) {
@@ -238,8 +229,22 @@ GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, i
                 const int next_idx = GETMAPINDEX(next_x, next_y, globalState.gridWidth, globalState.gridHeight);
                 const int move_cost = globalState.terrainMap[next_idx];
                 
-                if (move_cost >= globalState.obstacleThreshold) continue;
+                if (move_cost >= globalState.obstacleThreshold) {
+                    static_collisions++;
+                    continue;
+                }
                 if (visited[next_idx]) continue;
+                
+                // Dynamic obstacle check using compact representation
+                if (globalState.compactObstacles.timesteps.size() > 0) {
+                    int occ_time = next_time;
+                    
+                    // Check if this position is occupied by any obstacle at this time
+                    if (globalState.compactObstacles.isOccupied(next_x, next_y, occ_time)) {
+                        obstacle_collisions++;
+                        continue; // skip this cell - occupied by dynamic obstacle
+                    }
+                }
                 
                 // Check and Update g-value of successor
                 const int total_cost = current_node.getCost() + move_cost;
@@ -303,7 +308,7 @@ GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, i
 
 void planner(
     int* map,
-    const std::vector<std::vector<std::vector<bool>>>& occ3D,
+    CompactDynamicObstacles& compactObs,
     int collision_thresh,
     int x_size,
     int y_size,
@@ -344,16 +349,13 @@ void planner(
         return;
     }
 
-    if (occ3D.empty()) {
-        ROS_WARN("planner(): occ3D is empty");
-    }
     // setup environment parameters
     globalState.cleanup();
     globalState.gridWidth = x_size;
     globalState.gridHeight = y_size;
     globalState.obstacleThreshold = collision_thresh;
     globalState.terrainMap = map;
-    globalState.occupancyGrid = occ3D;
+    globalState.compactObstacles = compactObs;
 
     // allocate and initialize timeSteps
     const int total_cells = x_size * y_size;
@@ -365,7 +367,6 @@ void planner(
    
     // ROS_INFO_STREAM("planner(): environment parameters set");
     // allocate timing array and setup goal candidates
-    globalState.timeSteps = new int[x_size * y_size]; //stores earliest times to reach each cell in the map.
     vector<tuple<int, int, double, int>> candidate_interceptions;
     
     static int selected_goal_x, selected_goal_y, time_horizon;
@@ -378,6 +379,12 @@ void planner(
         globalState.robotToAllCosts = backwardHeuristicSearch(robotposeX, robotposeY, curr_time, target_steps);
         
         // analyze trajectory for optimal interception points
+        int reachable_count = 0;
+        
+        // Configuration: minimum time slack for dynamic obstacles
+        // Higher values allow more time to navigate around obstacles
+        const double MIN_TIME_SLACK_RATIO = 0.3; // Require at least 30% extra time
+        
         for (int i = 0; i < target_steps; i++) {
             int pos_x = target_traj[i];
             int pos_y = target_traj[i + target_steps];
@@ -386,12 +393,41 @@ void planner(
             bool reachable = (globalState.timeSteps[cell_index] <= i);
             bool valid_path = (globalState.robotToAllCosts[cell_index] > -1);
             
-            if (reachable && valid_path) {
+            // Check if we have enough time slack for dynamic obstacles
+            int required_time = globalState.timeSteps[cell_index];
+            int available_time = i;
+            double time_slack_ratio = (available_time - required_time) / (double)std::max(1, required_time);
+            bool has_slack = (time_slack_ratio >= MIN_TIME_SLACK_RATIO);
+            
+            if (reachable && valid_path && has_slack) {
                 int delay_time = i - globalState.timeSteps[cell_index]; // waiting time of cell for target to arrive if robot arrives to cell ahead of time.
                 int wait_cost = delay_time * map[cell_index];
                 double total_cost = globalState.robotToAllCosts[cell_index] + wait_cost; // total cost to intercept target at this cell
                 
                 candidate_interceptions.push_back(make_tuple(pos_x, pos_y, total_cost, i));
+                reachable_count++;
+            }
+        }
+        
+        // If no candidates with slack, try without slack requirement
+        if (candidate_interceptions.empty()) {
+            std::cout << "  No interception points with " << (MIN_TIME_SLACK_RATIO*100) << "% slack, retrying without slack..." << std::endl;
+            for (int i = 0; i < target_steps; i++) {
+                int pos_x = target_traj[i];
+                int pos_y = target_traj[i + target_steps];
+                int cell_index = GETMAPINDEX(pos_x, pos_y, x_size, y_size);
+                
+                bool reachable = (globalState.timeSteps[cell_index] <= i);
+                bool valid_path = (globalState.robotToAllCosts[cell_index] > -1);
+                
+                if (reachable && valid_path) {
+                    int delay_time = i - globalState.timeSteps[cell_index];
+                    int wait_cost = delay_time * map[cell_index];
+                    double total_cost = globalState.robotToAllCosts[cell_index] + wait_cost;
+                    
+                    candidate_interceptions.push_back(make_tuple(pos_x, pos_y, total_cost, i));
+                    reachable_count++;
+                }
             }
         }
         
@@ -413,6 +449,7 @@ void planner(
             action_ptr[1] = robotposeY;
             return;
         }
+        
         // select minimum cost interception from candidates
         auto best_option = *min_element(candidate_interceptions.begin(), candidate_interceptions.end(),
             [](const auto& a, const auto& b) { return get<2>(a) < get<2>(b); });
@@ -423,7 +460,13 @@ void planner(
         globalState.selectedGoalY = selected_goal_y;
         
         int goal_cell = GETMAPINDEX(selected_goal_x, selected_goal_y, x_size, y_size);
-        time_horizon = globalState.timeSteps[goal_cell];
+        int base_time = globalState.timeSteps[goal_cell];
+        int interception_time = get<3>(best_option);
+        
+        // Set time horizon to the interception timestep
+        // This gives the robot the full time until the target reaches that position
+        time_horizon = interception_time;
+        
         globalState.maxTimeHorizon = time_horizon;
         
         // Update heuristic from goal to all cells
@@ -432,8 +475,6 @@ void planner(
         //                 << selected_goal_x << "," << selected_goal_y
         //                 << ") with time horizon " << time_horizon);
     }
-   
-    // For t>=0, compute next action towards selected goal
     // handle destination reached case
     if ((robotposeX == selected_goal_x) && (robotposeY == selected_goal_y)) {
         action_ptr[0] = robotposeX;
