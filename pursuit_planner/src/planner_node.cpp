@@ -35,12 +35,7 @@ struct Waypoint {
     int duration;
 };
 
-struct Footprint {
-    std::string kind;  // "point", "circle", "box"
-    double radius = 0.0;
-    int width  = 0;
-    int height = 0;
-};
+// Note: Footprint struct is defined in planner.h
 
 struct DynamicObstacle {
     std::string id;
@@ -286,7 +281,7 @@ public:
         int targetposeY = target_traj_[curr_time_ + target_steps_];
 
         planner(map_,
-                occ3D_,
+                compactObs_,
                 collision_thresh_,
                 x_size_,
                 y_size_,
@@ -445,6 +440,7 @@ private:
     int* map_;
     int* target_traj_;
     std::vector<std::vector<std::vector<bool>>> occ3D_;
+    CompactDynamicObstacles compactObs_;
 
     int x_size_, y_size_;
     int collision_thresh_;
@@ -462,6 +458,38 @@ private:
     std::string dyno_yaml_path_;
 
     // std::ofstream output_file_;
+
+    // Convert from obstacle data structures to CompactDynamicObstacles
+    CompactDynamicObstacles convertToCompactObstacles(
+        const std::vector<DynamicObstacle>& obstacles,
+        const std::vector<ObstacleTraj>& obstacle_trajs,
+        int max_t)
+    {
+        CompactDynamicObstacles compact;
+        compact.max_time = max_t;
+        compact.timesteps.resize(max_t + 1);
+        
+        for (size_t obs_idx = 0; obs_idx < obstacles.size(); ++obs_idx) {
+            const auto& ob = obstacles[obs_idx];
+            const auto& traj = obstacle_trajs[obs_idx];
+            
+            for (int t = 0; t <= max_t; ++t) {
+                if (t >= (int)traj.size() || traj[t].empty()) continue;
+                
+                ObstacleState state;
+                state.x = traj[t][0].first;
+                state.y = traj[t][0].second;
+                state.footprint.kind = ob.footprint.kind;
+                state.footprint.radius = ob.footprint.radius;
+                state.footprint.width = ob.footprint.width;
+                state.footprint.height = ob.footprint.height;
+                
+                compact.timesteps[t].push_back(state);
+            }
+        }
+        
+        return compact;
+    }
 
     bool loadProblemFromFile()
     {
@@ -548,6 +576,10 @@ private:
         for (const auto& ob : obstacles_) {
             obstacle_trajs_.push_back(simulateObstacle(ob, target_steps_));
         }
+        
+        // Convert to compact format for planner
+        compactObs_ = convertToCompactObstacles(obstacles_, obstacle_trajs_, target_steps_);
+        
         obstacle_pub_map_.clear();
         //Create publishers for dynamic obstacles
         for (const auto& ob : obstacles_) {

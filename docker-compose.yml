@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  pursuit_planner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pursuit_planner:latest
+    container_name: pursuit_planner_ros
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount the local package so changes are reflected immediately
+      - ./:/catkin_ws/src/pursuit_planner
+      # Persist build artifacts (optional, for faster rebuilds)
+      - catkin_build:/catkin_ws/build
+      - catkin_devel:/catkin_ws/devel
+    working_dir: /catkin_ws
+    command: /bin/bash
+
+volumes:
+  catkin_build:
+  catkin_devel:
