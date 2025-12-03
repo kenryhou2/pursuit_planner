@@ -1,309 +1,387 @@
 /*=================================================================
- *
- * planner.cpp
- *
+ * planner.cpp - Hierarchical Waypoint-Based Planner
  *=================================================================*/
-#include <ros/ros.h>  
-#include "pursuit_planner/planner.h"
+#include "../include/pursuit_planner/planner.h"
 #include <math.h>
 #include <iostream>
+#include <fstream>
 #include <cstdio>
 #include <queue>
 #include <vector>
 #include <chrono>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 #include <string>
+#include <cmath>
+
 using namespace std;
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y-1)*XSIZE + (X-1))
 
 #if !defined(MAX)
-#define	MAX(A, B)	((A) > (B) ? (A) : (B))
+#define MAX(A, B) ((A) > (B) ? (A) : (B))
 #endif
 
 #if !defined(MIN)
-#define	MIN(A, B)	((A) < (B) ? (A) : (B))
+#define MIN(A, B) ((A) < (B) ? (A) : (B))
 #endif
 
 #define NUMOFDIRS 8
+static const double SQRT2 = 1.41421356237;
 
-// Navigation directions for 8-connected grid plus staying in place
 int dX[NUMOFDIRS + 1] = {-1, -1, -1,  0,  0,  1, 1, 1, 0};
 int dY[NUMOFDIRS + 1] = {-1,  0,  1, -1,  1, -1, 0, 1, 0};
 
-// Global state management
+double movementCost(int dir) {
+    if (dir == 0 || dir == 2 || dir == 5 || dir == 7) {
+        return SQRT2;
+    }
+    return 1.0;
+}
+
+struct Waypoint {
+    int x, y;
+    int estimated_arrival_time;
+    bool is_detour;
+    
+    Waypoint() : x(0), y(0), estimated_arrival_time(0), is_detour(false) {}
+    Waypoint(int px, int py, int t, bool detour = false) 
+        : x(px), y(py), estimated_arrival_time(t), is_detour(detour) {}
+};
+
 struct PlannerState {
     CompactDynamicObstacles compactObstacles;
-    vector<int> robotToAllCosts;
-    vector<int> goalToAllCosts;
-    int* timeSteps;                                             //array of timesteps?
-    bool initialized;
     int gridWidth, gridHeight, obstacleThreshold;
     int* terrainMap;
+    vector<Waypoint> waypoints;
+    int currentWaypointIdx;
+    vector<pair<int,int>> globalPath;
     int selectedGoalX, selectedGoalY;
     int maxTimeHorizon;
+    double waypointRadius;
+    bool initialized;
     
-    PlannerState() : initialized(false), timeSteps(nullptr) {}
-    
-    void cleanup() {
-        if (timeSteps) {
-            delete[] timeSteps;
-            timeSteps = nullptr;
-        }
-    }
+    PlannerState() : initialized(false), currentWaypointIdx(0), waypointRadius(4.0) {}
 };
 
 static PlannerState globalState;
 
-
-// Validate grid coordinates and time constraints
-inline bool isValidPosition(int x, int y, int time, int maxTime) {
+inline bool isValidCell(int x, int y) {
     return (x > 0) && (x <= globalState.gridWidth) && 
-           (y > 0) && (y <= globalState.gridHeight) && 
-           (time <= maxTime);
+           (y > 0) && (y <= globalState.gridHeight);
 }
 
-// Node representation for pathfinding with temporal dimension
-struct PathNode {
-private:
-    int position_x, position_y;
-    int timestamp;
-    int path_cost, estimated_cost;
-    int parent_action;
+inline bool isTraversable(int x, int y) {
+    if (!isValidCell(x, y)) return false;
+    int idx = GETMAPINDEX(x, y, globalState.gridWidth, globalState.gridHeight);
+    return globalState.terrainMap[idx] < globalState.obstacleThreshold;
+}
 
-public:
-    // Constructor with member initializer list
-    PathNode(int px, int py, int time, int g_val, int f_val, int action) 
-        : position_x(px), position_y(py), timestamp(time), 
-          path_cost(g_val), estimated_cost(f_val), parent_action(action) {}
+double euclideanDist(int x1, int y1, int x2, int y2) {
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    return sqrt(dx*dx + dy*dy);
+}
+
+struct DijkstraNode {
+    int x, y;
+    double cost;
     
-    // Accessors
-    int getX() const { return position_x; }
-    int getY() const { return position_y; }
-    int getTime() const { return timestamp; }
-    int getCost() const { return path_cost; }
-    int getEstimate() const { return estimated_cost; }
-    int getAction() const { return parent_action; }
+    DijkstraNode(int px, int py, double c) : x(px), y(py), cost(c) {}
     
-    // Equality comparison for spatial-temporal coordinates
-    bool isSameLocation(const PathNode& other) const {
-        return (position_x == other.position_x && 
-                position_y == other.position_y && 
-                timestamp == other.timestamp);
+    bool operator>(const DijkstraNode& other) const {
+        return cost > other.cost;
     }
 };
 
-struct HeuristicState {  
-    int x, y, steps, cost;
-    
-    HeuristicState(int pos_x, int pos_y, int step_count, int heuristic_cost) 
-        : x(pos_x), y(pos_y), steps(step_count), cost(heuristic_cost) {}
-};
-
-struct GridPosition {
-    int x, y, step_num;
-    
-    GridPosition(int pos_x, int pos_y, int step_number) 
-        : x(pos_x), y(pos_y), step_num(step_number) {}
-};
-
-
-
-vector<int> backwardHeuristicSearch(int goalX, int goalY, int curr_time, int target_steps) {
+vector<pair<int,int>> globalPathSearch(int startX, int startY, int goalX, int goalY) {
     const int total_cells = globalState.gridWidth * globalState.gridHeight;
     
-    // search data structures using heap-based priority queue
-    vector<HeuristicState> search_heap;
-    vector<int> distance_values(total_cells, -1);
-    vector<bool> processed(total_cells, false);
+    vector<double> dist(total_cells, -1);
+    vector<pair<int,int>> parent(total_cells, {-1, -1});
     
-    // initialize with goal state
-    HeuristicState goal_state(goalX, goalY, 0, 0);
-    const int goal_idx = GETMAPINDEX(goalX, goalY, globalState.gridWidth, globalState.gridHeight);
-    distance_values[goal_idx] = 0;
+    priority_queue<DijkstraNode, vector<DijkstraNode>, greater<DijkstraNode>> pq;
     
-    // heap operations
-    search_heap.push_back(goal_state);
-    make_heap(search_heap.begin(), search_heap.end(), [](const HeuristicState& a, const HeuristicState& b) {
-        return a.cost > b.cost;
-    });
+    int start_idx = GETMAPINDEX(startX, startY, globalState.gridWidth, globalState.gridHeight);
+    dist[start_idx] = 0;
+    pq.push(DijkstraNode(startX, startY, 0));
     
-    int cells_explored = 0;
-    while (!search_heap.empty()) {
-        // extract minimum
-        pop_heap(search_heap.begin(), search_heap.end(), [](const HeuristicState& a, const HeuristicState& b) {
-            return a.cost > b.cost;
-        });
-        HeuristicState current_node = search_heap.back();
-        search_heap.pop_back();
+    while (!pq.empty()) {
+        DijkstraNode curr = pq.top();
+        pq.pop();
         
-        const int current_idx = GETMAPINDEX(current_node.x, current_node.y, globalState.gridWidth, globalState.gridHeight);
+        if (curr.x == goalX && curr.y == goalY) break;
         
-        if (!processed[current_idx]) {
-            processed[current_idx] = true;
-            distance_values[current_idx] = current_node.cost;
-            cells_explored++;
+        int curr_idx = GETMAPINDEX(curr.x, curr.y, globalState.gridWidth, globalState.gridHeight);
+        if (dist[curr_idx] >= 0 && curr.cost > dist[curr_idx]) continue;
+        
+        for (int dir = 0; dir < 8; dir++) {
+            int nx = curr.x + dX[dir];
+            int ny = curr.y + dY[dir];
             
-            // check all 8 directions
-            for (int direction = 0; direction < 8; ++direction) {
-                const int neighbor_x = current_node.x + dX[direction];
-                const int neighbor_y = current_node.y + dY[direction];
-                const int time_step = current_node.steps + 1;
-                
-                if (isValidPosition(neighbor_x, neighbor_y, time_step, target_steps)) {
-                    const int neighbor_idx = GETMAPINDEX(neighbor_x, neighbor_y, globalState.gridWidth, globalState.gridHeight);
-                    const int cell_cost = globalState.terrainMap[neighbor_idx];
-                    
-                    if (cell_cost < globalState.obstacleThreshold) {
-                        const int new_distance = cell_cost + current_node.cost;
-                        
-                        if ((distance_values[neighbor_idx] > new_distance) || (!processed[neighbor_idx])) {
-                            distance_values[neighbor_idx] = new_distance;
-                            // heap insertion
-                            search_heap.push_back(HeuristicState(neighbor_x, neighbor_y, time_step, new_distance));
-                            push_heap(search_heap.begin(), search_heap.end(), [](const HeuristicState& a, const HeuristicState& b) {
-                                return a.cost > b.cost;
-                            });
-                            globalState.timeSteps[neighbor_idx] = time_step;
-                        }
-                    }
-                }
+            if (!isTraversable(nx, ny)) continue;
+            
+            int next_idx = GETMAPINDEX(nx, ny, globalState.gridWidth, globalState.gridHeight);
+            double terrain_cost = globalState.terrainMap[next_idx];
+            double move_dist = movementCost(dir);
+            double new_cost = curr.cost + terrain_cost * move_dist;
+            
+            if (dist[next_idx] < 0 || new_cost < dist[next_idx]) {
+                dist[next_idx] = new_cost;
+                parent[next_idx] = {curr.x, curr.y};
+                pq.push(DijkstraNode(nx, ny, new_cost));
             }
         }
     }
     
-    return distance_values;
+    vector<pair<int,int>> path;
+    int goal_idx = GETMAPINDEX(goalX, goalY, globalState.gridWidth, globalState.gridHeight);
+    
+    if (dist[goal_idx] < 0) {
+        cout << "WARNING: No global path found!" << endl;
+        return path;
+    }
+    
+    int cx = goalX, cy = goalY;
+    while (cx != -1 && cy != -1) {
+        path.push_back({cx, cy});
+        int idx = GETMAPINDEX(cx, cy, globalState.gridWidth, globalState.gridHeight);
+        auto p = parent[idx];
+        cx = p.first;
+        cy = p.second;
+    }
+    
+    reverse(path.begin(), path.end());
+    return path;
 }
 
-// Start coordinates are run with current robot position
-GridPosition AStarSearch(int start_x, int start_y, int target_x, int target_y, int current_time, int time_limit) {
-    const int total_cells = globalState.gridWidth * globalState.gridHeight;
+vector<Waypoint> extractWaypoints(const vector<pair<int,int>>& path, double N) {
+    vector<Waypoint> waypoints;
+    if (path.empty()) return waypoints;
     
-    // heap-based search data structures
-    vector<int> actual_costs(total_cells, -1);
-    vector<bool> visited(total_cells, false);
-    vector<PathNode> frontier_heap; //priority queue
-    vector<PathNode> path_history; //for backtracking
+    double accumulated_dist = 0.0;
+    int estimated_time = 0;
     
-    // initialize start node
-    const int start_idx = GETMAPINDEX(start_x, start_y, globalState.gridWidth, globalState.gridHeight);
-    const int start_estimate = globalState.goalToAllCosts[start_idx];
-    PathNode initial_node(start_x, start_y, current_time, 0, start_estimate, -1);
+    waypoints.push_back(Waypoint(path[0].first, path[0].second, 0, false));
     
-    frontier_heap.push_back(initial_node);
-    make_heap(frontier_heap.begin(), frontier_heap.end(), [](const PathNode& a, const PathNode& b) {
-        return a.getEstimate() > b.getEstimate();
-    });
-    actual_costs[start_idx] = 0;
-    
-    int nodes_expanded = 0;
-    int obstacle_collisions = 0;
-    int static_collisions = 0;
-    
-    // main a* search loop
-    bool destination_reached = false;
-    while (!frontier_heap.empty() && !destination_reached) {
-        // extract minimum from heap
-        pop_heap(frontier_heap.begin(), frontier_heap.end(), [](const PathNode& a, const PathNode& b) {
-            return a.getEstimate() > b.getEstimate();
-        });
-        PathNode current_node = frontier_heap.back();
-        frontier_heap.pop_back();
+    for (size_t i = 1; i < path.size(); i++) {
+        double dx = path[i].first - path[i-1].first;
+        double dy = path[i].second - path[i-1].second;
+        double step_dist = sqrt(dx*dx + dy*dy);
         
-        const int current_idx = GETMAPINDEX(current_node.getX(), current_node.getY(), globalState.gridWidth, globalState.gridHeight);
+        accumulated_dist += step_dist;
+        estimated_time++;
         
-        if (!visited[current_idx]) {
-            visited[current_idx] = true;
-            path_history.push_back(current_node);
-            nodes_expanded++;
-            
-            // explore all 9 directions (including staying in place)
-            for (int move_dir = 0; move_dir < 9; ++move_dir) {
-                const int next_x = current_node.getX() + dX[move_dir];
-                const int next_y = current_node.getY() + dY[move_dir];
-                const int next_time = current_node.getTime() + 1;
-                
-                if (!isValidPosition(next_x, next_y, next_time, time_limit)) continue;
-                
-                const int next_idx = GETMAPINDEX(next_x, next_y, globalState.gridWidth, globalState.gridHeight);
-                const int move_cost = globalState.terrainMap[next_idx];
-                
-                if (move_cost >= globalState.obstacleThreshold) {
-                    static_collisions++;
-                    continue;
-                }
-                if (visited[next_idx]) continue;
-                
-                // Dynamic obstacle check using compact representation
-                if (globalState.compactObstacles.timesteps.size() > 0) {
-                    int occ_time = next_time;
-                    
-                    // Check if this position is occupied by any obstacle at this time
-                    if (globalState.compactObstacles.isOccupied(next_x, next_y, occ_time)) {
-                        obstacle_collisions++;
-                        continue; // skip this cell - occupied by dynamic obstacle
-                    }
-                }
-                
-                // Check and Update g-value of successor
-                const int total_cost = current_node.getCost() + move_cost;
-                
-                if (actual_costs[next_idx] == -1 || total_cost < actual_costs[next_idx]) {
-                    actual_costs[next_idx] = total_cost;
-                    if (globalState.goalToAllCosts[next_idx] < 0) {
-                        continue; // skip if heuristic is invalid
-                    }
-                    const int estimated_total = total_cost + globalState.goalToAllCosts[next_idx];
-                    // heap insertion
-                    frontier_heap.push_back(PathNode(next_x, next_y, next_time, total_cost, estimated_total, move_dir));
-                    push_heap(frontier_heap.begin(), frontier_heap.end(), [](const PathNode& a, const PathNode& b) {
-                        return a.getEstimate() > b.getEstimate();
-                    });
+        if (accumulated_dist >= N) {
+            waypoints.push_back(Waypoint(path[i].first, path[i].second, estimated_time, false));
+            accumulated_dist = 0.0;
+        }
+    }
+    
+    if (waypoints.back().x != path.back().first || waypoints.back().y != path.back().second) {
+        waypoints.push_back(Waypoint(path.back().first, path.back().second, path.size() - 1, false));
+    }
+    
+    return waypoints;
+}
+
+vector<Waypoint> findDetourWaypoints(int fromX, int fromY, int blockedX, int blockedY, 
+                                      int toX, int toY, int curr_time, double visibility_range) {
+    vector<Waypoint> detours;
+    
+    double pathDx = blockedX - fromX;
+    double pathDy = blockedY - fromY;
+    double pathLen = sqrt(pathDx * pathDx + pathDy * pathDy);
+    
+    if (pathLen < 0.001) {
+        pathDx = toX - blockedX;
+        pathDy = toY - blockedY;
+        pathLen = sqrt(pathDx * pathDx + pathDy * pathDy);
+    }
+    
+    if (pathLen < 0.001) return detours;
+    
+    double perpX = -pathDy / pathLen;
+    double perpY = pathDx / pathLen;
+    
+    double detour_dist = visibility_range * 0.5;
+    
+    int detour1X = (int)round(blockedX + perpX * detour_dist);
+    int detour1Y = (int)round(blockedY + perpY * detour_dist);
+    
+    int detour2X = (int)round(blockedX - perpX * detour_dist);
+    int detour2Y = (int)round(blockedY - perpY * detour_dist);
+    
+    int estimated_arrival = curr_time + (int)ceil(euclideanDist(fromX, fromY, blockedX, blockedY));
+    
+    auto isDetourValid = [&](int dx, int dy) -> bool {
+        if (!isValidCell(dx, dy)) return false;
+        if (!isTraversable(dx, dy)) return false;
+        
+        if (globalState.compactObstacles.timesteps.size() > 0) {
+            for (int t = estimated_arrival - 2; t <= estimated_arrival + 3; t++) {
+                if (t >= 0 && globalState.compactObstacles.isOccupied(dx, dy, t)) {
+                    return false;
                 }
             }
+        }
+        return true;
+    };
+    
+    bool side1_valid = isDetourValid(detour1X, detour1Y);
+    bool side2_valid = isDetourValid(detour2X, detour2Y);
+    
+    double dist1_to_goal = euclideanDist(detour1X, detour1Y, toX, toY);
+    double dist2_to_goal = euclideanDist(detour2X, detour2Y, toX, toY);
+    
+    int chosenX, chosenY;
+    if (side1_valid && side2_valid) {
+        if (dist1_to_goal < dist2_to_goal) {
+            chosenX = detour1X;
+            chosenY = detour1Y;
+        } else {
+            chosenX = detour2X;
+            chosenY = detour2Y;
+        }
+    } else if (side1_valid) {
+        chosenX = detour1X;
+        chosenY = detour1Y;
+    } else if (side2_valid) {
+        chosenX = detour2X;
+        chosenY = detour2Y;
+    } else {
+        detour_dist = visibility_range * 0.25;
+        detour1X = (int)round(blockedX + perpX * detour_dist);
+        detour1Y = (int)round(blockedY + perpY * detour_dist);
+        detour2X = (int)round(blockedX - perpX * detour_dist);
+        detour2Y = (int)round(blockedY - perpY * detour_dist);
+        
+        side1_valid = isDetourValid(detour1X, detour1Y);
+        side2_valid = isDetourValid(detour2X, detour2Y);
+        
+        if (side1_valid) {
+            chosenX = detour1X;
+            chosenY = detour1Y;
+        } else if (side2_valid) {
+            chosenX = detour2X;
+            chosenY = detour2Y;
+        } else {
+            return detours;
+        }
+    }
+    
+    int detour_arrival = curr_time + (int)ceil(euclideanDist(fromX, fromY, chosenX, chosenY));
+    detours.push_back(Waypoint(chosenX, chosenY, detour_arrival, true));
+    
+    return detours;
+}
+
+struct TimeSpaceNode {
+    int x, y, time;
+    double g_cost, f_cost;
+    
+    TimeSpaceNode(int px, int py, int t, double g, double f)
+        : x(px), y(py), time(t), g_cost(g), f_cost(f) {}
+    
+    bool operator>(const TimeSpaceNode& other) const {
+        return f_cost > other.f_cost;
+    }
+};
+
+struct StateHash {
+    size_t operator()(const tuple<int,int,int>& state) const {
+        auto h1 = hash<int>{}(get<0>(state));
+        auto h2 = hash<int>{}(get<1>(state));
+        auto h3 = hash<int>{}(get<2>(state));
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
+    }
+};
+
+pair<int,int> segmentAStarSearch(int startX, int startY, int goalX, int goalY, 
+                                  int current_time, int time_limit) {
+    
+    auto heuristic = [goalX, goalY](int x, int y) -> double {
+        return euclideanDist(x, y, goalX, goalY);
+    };
+    
+    priority_queue<TimeSpaceNode, vector<TimeSpaceNode>, greater<TimeSpaceNode>> open_set;
+    unordered_map<tuple<int,int,int>, double, StateHash> g_scores;
+    unordered_map<tuple<int,int,int>, tuple<int,int,int>, StateHash> came_from;
+    
+    double start_h = heuristic(startX, startY);
+    open_set.push(TimeSpaceNode(startX, startY, current_time, 0, start_h));
+    g_scores[{startX, startY, current_time}] = 0;
+    
+    int goal_x = -1, goal_y = -1, goal_t = -1;
+    bool found = false;
+    int max_iterations = 100000;
+    int iterations = 0;
+    
+    while (!open_set.empty() && iterations < max_iterations) {
+        iterations++;
+        
+        TimeSpaceNode curr = open_set.top();
+        open_set.pop();
+        
+        if (curr.x == goalX && curr.y == goalY) {
+            goal_x = curr.x;
+            goal_y = curr.y;
+            goal_t = curr.time;
+            found = true;
+            break;
+        }
+        
+        if (curr.time >= time_limit) continue;
+        
+        auto curr_state = make_tuple(curr.x, curr.y, curr.time);
+        if (g_scores.count(curr_state) && curr.g_cost > g_scores[curr_state]) continue;
+        
+        for (int dir = 0; dir < 9; dir++) {
+            int nx = curr.x + dX[dir];
+            int ny = curr.y + dY[dir];
+            int nt = curr.time + 1;
             
-            // check if goal reached
-            if (current_node.getX() == target_x && current_node.getY() == target_y) {
-                destination_reached = true;
-                
-                // backtrack to find next move using vector operations
-                while (!path_history.empty() && !current_node.isSameLocation(path_history.back())) {
-                    path_history.pop_back();
-                }
-                
-                if (path_history.empty()) return GridPosition(current_node.getX(), current_node.getY(), 0);
-                
-                PathNode trace_node = path_history.back();
-                path_history.pop_back();
-                
-                // trace back to find first move
-                while (!path_history.empty()) {
-                    const int prev_x = trace_node.getX() - dX[trace_node.getAction()];
-                    const int prev_y = trace_node.getY() - dY[trace_node.getAction()];
-                    PathNode previous_node(prev_x, prev_y, trace_node.getTime() - 1, 0, 0, 0);
-                    
-                    while (!path_history.empty() && !previous_node.isSameLocation(path_history.back())) {
-                        path_history.pop_back();
-                    }
-                    
-                    if (path_history.empty()) break;
-                    
-                    previous_node = path_history.back();
-                    path_history.pop_back();
-                    
-                    if (previous_node.getAction() == -1) {
-                        return GridPosition(trace_node.getX(), trace_node.getY(), 0);
-                    }
-                    trace_node = previous_node;
-                }
-                return GridPosition(current_node.getX(), current_node.getY(), 0);
+            if (!isValidCell(nx, ny)) continue;
+            if (!isTraversable(nx, ny)) continue;
+            
+            if (globalState.compactObstacles.timesteps.size() > 0) {
+                if (globalState.compactObstacles.isOccupied(nx, ny, nt)) continue;
+            }
+            
+            int terrain_idx = GETMAPINDEX(nx, ny, globalState.gridWidth, globalState.gridHeight);
+            double terrain_cost = globalState.terrainMap[terrain_idx];
+            double move_cost = (dir == 8) ? 1.0 : movementCost(dir);
+            double new_g = curr.g_cost + terrain_cost * move_cost;
+            
+            auto next_state = make_tuple(nx, ny, nt);
+            
+            if (!g_scores.count(next_state) || new_g < g_scores[next_state]) {
+                g_scores[next_state] = new_g;
+                came_from[next_state] = make_tuple(curr.x, curr.y, curr.time);
+                double h = heuristic(nx, ny);
+                open_set.push(TimeSpaceNode(nx, ny, nt, new_g, new_g + h));
             }
         }
     }
     
-    // no path found, stay in place
-    return GridPosition(start_x, start_y, 0);
+    if (!found) {
+        cout << "  Segment A* failed" << endl;
+        return {startX, startY};
+    }
+    
+    vector<tuple<int,int,int>> path;
+    auto state = make_tuple(goal_x, goal_y, goal_t);
+    
+    while (came_from.count(state)) {
+        path.push_back(state);
+        state = came_from[state];
+    }
+    path.push_back(state);
+    reverse(path.begin(), path.end());
+    
+    if (path.size() < 2) return {startX, startY};
+    return {get<0>(path[1]), get<1>(path[1])};
 }
 
 void planner(
@@ -322,172 +400,138 @@ void planner(
     int* action_ptr
 )
 {
-    // ROS_INFO_STREAM("Calling instance of planner");
-    if (!map) {
-        ROS_ERROR("planner(): map pointer is null");
-        return;
-    }
-    if (!target_traj) {
-        ROS_ERROR("planner(): target_traj pointer is null");
-        return;
-    }
-    if (!action_ptr) {
-        ROS_ERROR("planner(): action_ptr pointer is null");
-        return;
-    }
-    if (x_size <= 0 || y_size <= 0) {
-        ROS_ERROR("planner(): invalid grid size");
-        return;
-    }
-    if (target_steps <= 0) {
-        ROS_ERROR("planner(): target_steps <= 0");
-        return;
-    }
-    if (curr_time < 0 || curr_time >= target_steps) {
-        ROS_ERROR_STREAM("planner(): curr_time " << curr_time
-                         << " out of [0," << target_steps << ")");
-        return;
-    }
-
-    // setup environment parameters
-    globalState.cleanup();
+    const double WAYPOINT_DISTANCE = x_size / 10.0;
+    
     globalState.gridWidth = x_size;
     globalState.gridHeight = y_size;
     globalState.obstacleThreshold = collision_thresh;
     globalState.terrainMap = map;
     globalState.compactObstacles = compactObs;
-
-    // allocate and initialize timeSteps
-    const int total_cells = x_size * y_size;
-    globalState.timeSteps = new int[total_cells];
-    for (int i = 0; i < total_cells; ++i) {
-        // "infinite" time means unreachable
-        globalState.timeSteps[i] = std::numeric_limits<int>::max();
-    }
-   
-    // ROS_INFO_STREAM("planner(): environment parameters set");
-    // allocate timing array and setup goal candidates
-    vector<tuple<int, int, double, int>> candidate_interceptions;
+    globalState.waypointRadius = WAYPOINT_DISTANCE;
     
-    static int selected_goal_x, selected_goal_y, time_horizon;
-    
-    // perform goal selection on first call
     if (curr_time == 0) {
         globalState.initialized = true;
+        globalState.currentWaypointIdx = 0;
         
-        // compute heuristic from robot to all cells
-        globalState.robotToAllCosts = backwardHeuristicSearch(robotposeX, robotposeY, curr_time, target_steps);
+        cout << "\n=== HIERARCHICAL WAYPOINT PLANNER ===" << endl;
+        cout << "Robot: (" << robotposeX << ", " << robotposeY << "), N=" << WAYPOINT_DISTANCE << endl;
         
-        // analyze trajectory for optimal interception points
-        int reachable_count = 0;
+        int goal_x = target_traj[target_steps - 1];
+        int goal_y = target_traj[target_steps - 1 + target_steps];
         
-        // Configuration: minimum time slack for dynamic obstacles
-        // Higher values allow more time to navigate around obstacles
-        const double MIN_TIME_SLACK_RATIO = 0.3; // Require at least 30% extra time
+        globalState.selectedGoalX = goal_x;
+        globalState.selectedGoalY = goal_y;
+        globalState.maxTimeHorizon = target_steps - 1;
         
-        for (int i = 0; i < target_steps; i++) {
-            int pos_x = target_traj[i];
-            int pos_y = target_traj[i + target_steps];
-            int cell_index = GETMAPINDEX(pos_x, pos_y, x_size, y_size);
-            
-            bool reachable = (globalState.timeSteps[cell_index] <= i);
-            bool valid_path = (globalState.robotToAllCosts[cell_index] > -1);
-            
-            // Check if we have enough time slack for dynamic obstacles
-            int required_time = globalState.timeSteps[cell_index];
-            int available_time = i;
-            double time_slack_ratio = (available_time - required_time) / (double)std::max(1, required_time);
-            bool has_slack = (time_slack_ratio >= MIN_TIME_SLACK_RATIO);
-            
-            if (reachable && valid_path && has_slack) {
-                int delay_time = i - globalState.timeSteps[cell_index]; // waiting time of cell for target to arrive if robot arrives to cell ahead of time.
-                int wait_cost = delay_time * map[cell_index];
-                double total_cost = globalState.robotToAllCosts[cell_index] + wait_cost; // total cost to intercept target at this cell
-                
-                candidate_interceptions.push_back(make_tuple(pos_x, pos_y, total_cost, i));
-                reachable_count++;
-            }
-        }
+        cout << "Goal: (" << goal_x << ", " << goal_y << ") [final target position]" << endl;
         
-        // If no candidates with slack, try without slack requirement
-        if (candidate_interceptions.empty()) {
-            std::cout << "  No interception points with " << (MIN_TIME_SLACK_RATIO*100) << "% slack, retrying without slack..." << std::endl;
-            for (int i = 0; i < target_steps; i++) {
-                int pos_x = target_traj[i];
-                int pos_y = target_traj[i + target_steps];
-                int cell_index = GETMAPINDEX(pos_x, pos_y, x_size, y_size);
-                
-                bool reachable = (globalState.timeSteps[cell_index] <= i);
-                bool valid_path = (globalState.robotToAllCosts[cell_index] > -1);
-                
-                if (reachable && valid_path) {
-                    int delay_time = i - globalState.timeSteps[cell_index];
-                    int wait_cost = delay_time * map[cell_index];
-                    double total_cost = globalState.robotToAllCosts[cell_index] + wait_cost;
-                    
-                    candidate_interceptions.push_back(make_tuple(pos_x, pos_y, total_cost, i));
-                    reachable_count++;
-                }
-            }
-        }
+        globalState.globalPath = globalPathSearch(robotposeX, robotposeY, goal_x, goal_y);
         
-        if (candidate_interceptions.empty()) {
-            // No valid interception found – safe fallback
-            // std::cerr << "planner(): no valid interception candidates found; "
-            //         << "robot will stay in place at ("
-            //         << robotposeX << "," << robotposeY << ") for this step."
-            //         << std::endl;
-
-            // Optional: clean up timeSteps
-            if (globalState.timeSteps) {
-                delete[] globalState.timeSteps;
-                globalState.timeSteps = nullptr;
-            }
-
-            // Just stay put
+        if (globalState.globalPath.empty()) {
             action_ptr[0] = robotposeX;
             action_ptr[1] = robotposeY;
             return;
         }
         
-        // select minimum cost interception from candidates
-        auto best_option = *min_element(candidate_interceptions.begin(), candidate_interceptions.end(),
-            [](const auto& a, const auto& b) { return get<2>(a) < get<2>(b); });
+        cout << "Path length: " << globalState.globalPath.size() << endl;
         
-        selected_goal_x = get<0>(best_option);
-        selected_goal_y = get<1>(best_option);
-        globalState.selectedGoalX = selected_goal_x;
-        globalState.selectedGoalY = selected_goal_y;
+        globalState.waypoints = extractWaypoints(globalState.globalPath, WAYPOINT_DISTANCE);
         
-        int goal_cell = GETMAPINDEX(selected_goal_x, selected_goal_y, x_size, y_size);
-        int base_time = globalState.timeSteps[goal_cell];
-        int interception_time = get<3>(best_option);
+        cout << "Waypoints (" << globalState.waypoints.size() << "):" << endl;
+        for (size_t i = 0; i < globalState.waypoints.size(); i++) {
+            cout << "  WP" << i << ": (" << globalState.waypoints[i].x << "," 
+                 << globalState.waypoints[i].y << ")" << endl;
+        }
         
-        // Set time horizon to the interception timestep
-        // This gives the robot the full time until the target reaches that position
-        time_horizon = interception_time;
+        ofstream wp_file("../output/waypoints.txt");
+        if (wp_file.is_open()) {
+            for (size_t i = 0; i < globalState.waypoints.size(); i++) {
+                wp_file << globalState.waypoints[i].x << "," 
+                        << globalState.waypoints[i].y << ","
+                        << (globalState.waypoints[i].is_detour ? 1 : 0) << endl;
+            }
+            wp_file.close();
+        }
         
-        globalState.maxTimeHorizon = time_horizon;
-        
-        // Update heuristic from goal to all cells
-        globalState.goalToAllCosts = backwardHeuristicSearch(selected_goal_x, selected_goal_y, curr_time, time_horizon);
-        // ROS_INFO_STREAM("Planner selected interception goal at ("
-        //                 << selected_goal_x << "," << selected_goal_y
-        //                 << ") with time horizon " << time_horizon);
+        globalState.currentWaypointIdx = 1;
     }
-    // handle destination reached case
-    if ((robotposeX == selected_goal_x) && (robotposeY == selected_goal_y)) {
+    
+    if (robotposeX == globalState.selectedGoalX && robotposeY == globalState.selectedGoalY) {
         action_ptr[0] = robotposeX;
         action_ptr[1] = robotposeY;
         return;
     }
     
-    // compute next robot movement using pathfinding
-    GridPosition robot_next = AStarSearch(robotposeX, robotposeY, selected_goal_x, selected_goal_y, curr_time, time_horizon);
-
-    // set action outputs
-    action_ptr[0] = robot_next.x;
-    action_ptr[1] = robot_next.y;
+    if (globalState.currentWaypointIdx < (int)globalState.waypoints.size()) {
+        Waypoint& curr_wp = globalState.waypoints[globalState.currentWaypointIdx];
+        double dist_to_wp = euclideanDist(robotposeX, robotposeY, curr_wp.x, curr_wp.y);
+        if (dist_to_wp < 1.42) {
+            globalState.currentWaypointIdx++;
+        }
+    }
     
-    return;
+    int target_wp_idx = globalState.currentWaypointIdx;
+    target_wp_idx = MIN(target_wp_idx, (int)globalState.waypoints.size() - 1);
+    
+    Waypoint& target_wp = globalState.waypoints[target_wp_idx];
+    
+    int estimated_arrival = curr_time + (int)ceil(euclideanDist(robotposeX, robotposeY, target_wp.x, target_wp.y));
+    bool blocked = false;
+    
+    if (globalState.compactObstacles.timesteps.size() > 0) {
+        for (int t = estimated_arrival - 2; t <= estimated_arrival + 3; t++) {
+            if (t >= 0 && globalState.compactObstacles.isOccupied(target_wp.x, target_wp.y, t)) {
+                blocked = true;
+                break;
+            }
+        }
+    }
+    
+    if (blocked && !target_wp.is_detour) {
+        int next_wp_idx = MIN(target_wp_idx + 1, (int)globalState.waypoints.size() - 1);
+        Waypoint& next_wp = globalState.waypoints[next_wp_idx];
+        
+        vector<Waypoint> detours = findDetourWaypoints(
+            robotposeX, robotposeY,
+            target_wp.x, target_wp.y,
+            next_wp.x, next_wp.y,
+            curr_time, globalState.waypointRadius
+        );
+        
+        if (!detours.empty()) {
+            cout << "  WP" << target_wp_idx << " (" << target_wp.x << "," << target_wp.y 
+                 << ") blocked at t~" << estimated_arrival << ", creating detour via ("
+                 << detours[0].x << "," << detours[0].y << ")" << endl;
+            
+            globalState.waypoints[target_wp_idx] = detours[0];
+            
+            ofstream wp_file("../output/waypoints.txt");
+            if (wp_file.is_open()) {
+                for (size_t i = 0; i < globalState.waypoints.size(); i++) {
+                    wp_file << globalState.waypoints[i].x << "," 
+                            << globalState.waypoints[i].y << ","
+                            << (globalState.waypoints[i].is_detour ? 1 : 0) << endl;
+                }
+                wp_file.close();
+            }
+        } else {
+            cout << "  WP" << target_wp_idx << " blocked, no valid detour found, skipping" << endl;
+            globalState.waypoints[target_wp_idx].is_detour = true;
+            globalState.currentWaypointIdx++;
+        }
+    }
+    
+    target_wp_idx = MIN(target_wp_idx, (int)globalState.waypoints.size() - 1);
+    Waypoint& final_target_wp = globalState.waypoints[target_wp_idx];
+    
+    int estimated_segment_time = (int)ceil(euclideanDist(robotposeX, robotposeY, final_target_wp.x, final_target_wp.y));
+    int segment_time_limit = curr_time + estimated_segment_time * 3 + 20;
+    
+    pair<int,int> next_move = segmentAStarSearch(
+        robotposeX, robotposeY, final_target_wp.x, final_target_wp.y,
+        curr_time, segment_time_limit
+    );
+    
+    action_ptr[0] = next_move.first;
+    action_ptr[1] = next_move.second;
 }

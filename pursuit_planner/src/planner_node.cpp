@@ -137,65 +137,14 @@ simulateObstacle(const DynamicObstacle& ob, int max_t)
 
 // 3D occupancy grid: occ[t][y][x], with 1-based x,y indices
 static std::vector<std::vector<std::vector<bool>>>
-buildDynamicOccupancyGrid(
-    const std::vector<DynamicObstacle>& obstacles,
-    int x_size, int y_size, int max_t)
-{
-    std::vector<std::vector<std::vector<bool>>> occ(
-        max_t + 1,
-        std::vector<std::vector<bool>>(
-            y_size + 1, std::vector<bool>(x_size + 1, false)));
-
-    for (const auto& ob : obstacles) {
-        auto traj = simulateObstacle(ob, max_t);
-
-        for (int t = 0; t <= max_t; ++t) {
-            if (traj[t].empty()) continue;
-            int px = traj[t][0].first;
-            int py = traj[t][0].second;
-
-            if (ob.footprint.kind == "point") {
-                if (px >= 1 && px <= x_size && py >= 1 && py <= y_size)
-                    occ[t][py][px] = true;
-            }
-            else if (ob.footprint.kind == "circle") {
-                int R = (int)std::ceil(ob.footprint.radius);
-                for (int dx = -R; dx <= R; ++dx) {
-                    for (int dy = -R; dy <= R; ++dy) {
-                        if (dx*dx + dy*dy <= R*R) {
-                            int nx = px + dx;
-                            int ny = py + dy;
-                            if (nx >= 1 && nx <= x_size &&
-                                ny >= 1 && ny <= y_size)
-                            {
-                                occ[t][ny][nx] = true;
-                            }
-                        }
-                    }
-                }
-            }
-            else if (ob.footprint.kind == "box") {
-                for (int dx = -ob.footprint.width / 2;
-                     dx <=  ob.footprint.width / 2; ++dx)
-                {
-                    for (int dy = -ob.footprint.height / 2;
-                         dy <=  ob.footprint.height / 2; ++dy)
-                    {
-                        int nx = px + dx;
-                        int ny = py + dy;
-                        if (nx >= 1 && nx <= x_size &&
-                            ny >= 1 && ny <= y_size)
-                        {
-                            occ[t][ny][nx] = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return occ;
-}
+// DEPRECATED: Replaced by CompactDynamicObstacles representation
+// static std::vector<std::vector<std::vector<bool>>>
+// buildDynamicOccupancyGrid(
+//     const std::vector<DynamicObstacle>& obstacles,
+//     int x_size, int y_size, int max_t)
+// {
+//     ... (function body removed)
+// }
 
 using ObstacleTraj = std::vector<std::vector<std::pair<int,int>>>;
 
@@ -439,7 +388,6 @@ private:
     // problem data
     int* map_;
     int* target_traj_;
-    std::vector<std::vector<std::vector<bool>>> occ3D_;
     CompactDynamicObstacles compactObs_;
 
     int x_size_, y_size_;
@@ -569,7 +517,6 @@ private:
         auto obstacles = loadDynamicObstacles(dyno_yaml_path_);
         ROS_INFO_STREAM("Loaded " << obstacles.size() << " dynamic obstacles from " << dyno_yaml_path_);
         obstacles_ = obstacles;
-        occ3D_ = buildDynamicOccupancyGrid(obstacles_, x_size_, y_size_, target_steps_);
 
         // simulate and store obstacle trajectories
         obstacle_trajs_.clear();
