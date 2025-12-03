@@ -1,0 +1,48 @@
+dynamic_obstacles: 
+  # Obstacle 1: Crosses diagonal around (7,7) at time ~6-8
+  # Moves horizontally from left to right across the diagonal
+  - id: obs1
+    footprint:
+      kind: circle
+      radius: 1
+    waypoints:
+      - x: 1
+        y: 7
+        duration: 0
+      - x: 15
+        y: 7
+        duration: 15
+
+  # Obstacle 2: Crosses diagonal around (10,10) at time ~9-11
+  # Moves from bottom-left to top-right, sitting on the diagonal
+  - id: obs2
+    footprint:
+      kind: circle
+      radius: 1
+    waypoints:
+      - x: 10
+        y: 5
+        duration: 0
+      - x: 10
+        y: 10
+        duration: 8
+      - x: 10
+        y: 15
+        duration: 8
+
+  # Obstacle 3: Camps on waypoint (13,13) for a while
+  # This will force robot to wait or go around
+  - id: obs3
+    footprint:
+      kind: circle
+      radius: 1
+    waypoints:
+      - x: 13
+        y: 13
+        duration: 0
+      - x: 13
+        y: 13
+        duration: 20
+      - x: 18
+        y: 13
+        duration: 10

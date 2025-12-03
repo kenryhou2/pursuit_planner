@@ -1,0 +1,81 @@
+dynamic_obstacles:
+  # Large circular obstacle sweeping horizontally in the lower region
+  - id: obs0
+    footprint:
+      kind: circle
+      radius: 28
+    waypoints:
+      - x: 90
+        y: 90
+        duration: 0
+      - x: 360
+        y: 90
+        duration: 170
+      - x: 360
+        y: 150
+        duration: 80
+      - x: 90
+        y: 150
+        duration: 170
+      - x: 90
+        y: 90
+        duration: 80
+
+  # Box obstacle patrolling vertically in the right side
+  - id: obs1
+    footprint:
+      kind: box
+      width: 38
+      height: 38
+    waypoints:
+      - x: 340
+        y: 60
+        duration: 0
+      - x: 340
+        y: 180
+        duration: 140
+      - x: 340
+        y: 60
+        duration: 140
+
+  # Fast moving obstacle in the middle region
+  - id: obs2
+    footprint:
+      kind: circle
+      radius: 24
+    waypoints:
+      - x: 380
+        y: 35
+        duration: 0
+      - x: 220
+        y: 130
+        duration: 120
+      - x: 300
+        y: 200
+        duration: 100
+      - x: 380
+        y: 35
+        duration: 140
+
+  # Smaller box obstacle in upper-middle section
+  - id: obs3
+    footprint:
+      kind: box
+      width: 30
+      height: 30
+    waypoints:
+      - x: 180
+        y: 110
+        duration: 0
+      - x: 310
+        y: 110
+        duration: 85
+      - x: 310
+        y: 190
+        duration: 85
+      - x: 180
+        y: 190
+        duration: 85
+      - x: 180
+        y: 110
+        duration: 85

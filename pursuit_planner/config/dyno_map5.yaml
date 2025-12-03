@@ -1,0 +1,55 @@
+dynamic_obstacles:
+  # Circle obstacle that moves across but leaves gaps
+  - id: obs0
+    footprint:
+      kind: circle
+      radius: 15
+    waypoints:
+      - x: 70
+        y: 80
+        duration: 0
+      - x: 70
+        y: 120
+        duration: 50
+      - x: 140
+        y: 120
+        duration: 60
+      - x: 140
+        y: 80
+        duration: 50
+      - x: 70
+        y: 80
+        duration: 50
+
+  # Box obstacle patrolling but leaving space
+  - id: obs1
+    footprint:
+      kind: box
+      width: 20
+      height: 20
+    waypoints:
+      - x: 120
+        y: 85
+        duration: 0
+      - x: 120
+        y: 115
+        duration: 60
+      - x: 120
+        y: 85
+        duration: 60
+
+  # Small fast obstacle creating timing challenges
+  - id: obs2
+    footprint:
+      kind: circle
+      radius: 12
+    waypoints:
+      - x: 90
+        y: 90
+        duration: 0
+      - x: 110
+        y: 110
+        duration: 40
+      - x: 90
+        y: 90
+        duration: 40
