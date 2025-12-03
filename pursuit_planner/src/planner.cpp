@@ -309,13 +309,20 @@ pair<int,int> segmentAStarSearch(int startX, int startY, int goalX, int goalY,
     unordered_map<tuple<int,int,int>, double, StateHash> g_scores;
     unordered_map<tuple<int,int,int>, tuple<int,int,int>, StateHash> came_from;
     
+    // Reserve space to avoid repeated reallocations
+    int estimated_states = globalState.gridWidth * globalState.gridHeight * min(10, time_limit - current_time);
+    g_scores.reserve(estimated_states);
+    came_from.reserve(estimated_states);
+    
     double start_h = heuristic(startX, startY);
     open_set.push(TimeSpaceNode(startX, startY, current_time, 0, start_h));
     g_scores[{startX, startY, current_time}] = 0;
     
     int goal_x = -1, goal_y = -1, goal_t = -1;
     bool found = false;
-    int max_iterations = 100000;
+    // Limit iterations based on state space size to prevent memory explosion
+    int max_states = globalState.gridWidth * globalState.gridHeight * (time_limit - current_time);
+    int max_iterations = min(max_states * 3, 50000);  // Cap at 50k to prevent memory issues
     int iterations = 0;
     
     while (!open_set.empty() && iterations < max_iterations) {
