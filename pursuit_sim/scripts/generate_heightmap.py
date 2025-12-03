@@ -181,6 +181,28 @@ def write_world_with_inlined_heightmap(world_path: str,
         <sdf version="1.6">
           <world name="terrain_world">
 
+            <!-- Physics settings for better contact -->
+            <physics type="ode">
+              <!-- smaller step size + more iterations = better contact, more CPU -->
+              <max_step_size>0.001</max_step_size>          <!-- 1 ms -->
+              <real_time_update_rate>1000</real_time_update_rate>
+              <real_time_factor>1.0</real_time_factor>
+
+              <ode>
+                <solver>
+                  <type>quick</type>                        <!-- or "world" -->
+                  <iters>250</iters>                         <!-- try 50–100 -->
+                  <sor>0.5</sor>
+                </solver>
+                <constraints>
+                  <cfm>1e-5</cfm>
+                  <erp>0.2</erp>
+                  <contact_max_correcting_vel>5.0</contact_max_correcting_vel>
+                  <contact_surface_layer>0.001</contact_surface_layer>
+                </constraints>
+              </ode>
+            </physics>
+
             <include>
               <uri>model://sun</uri>
             </include>
@@ -198,6 +220,30 @@ def write_world_with_inlined_heightmap(world_path: str,
                       <pos>0 0 0</pos>
                     </heightmap>
                   </geometry>
+
+                  <!-- NEW: contact + friction settings -->
+                  <surface>
+                    <friction>
+                      <ode>
+                        <!-- high friction in both tangential directions -->
+                        <mu>100.0</mu>
+                        <mu2>100.0</mu2>
+                        <!-- no intentional slip -->
+                        <slip1>0.0</slip1>
+                        <slip2>0.0</slip2>
+                      </ode>
+                    </friction>
+
+                    <contact>
+                      <ode>
+                        <!-- contact stiffness / damping -->
+                        <kp>1000000.0</kp>        <!-- 1e5 -->
+                        <kd>10.0</kd>
+                        <max_vel>0.01</max_vel>
+                        <min_depth>0.001</min_depth>
+                      </ode>
+                    </contact>
+                  </surface>
                 </collision>
 
                 <visual name="terrain_visual">

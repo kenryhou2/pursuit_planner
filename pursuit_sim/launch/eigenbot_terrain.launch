@@ -11,12 +11,12 @@
        default="$(find pursuit_sim)/worlds/terrain_world.world" />
 
   <!-- Eigenbot pose in the world -->
-  <arg name="eigenbot_x"     default="0.0" />
+  <!-- <arg name="eigenbot_x"     default="0.0" />
   <arg name="eigenbot_y"     default="0.0" />
   <arg name="eigenbot_z"     default="20" />
   <arg name="eigenbot_roll"  default="0.0" />
   <arg name="eigenbot_pitch" default="4.71" />
-  <arg name="eigenbot_yaw"   default="0.0" />
+  <arg name="eigenbot_yaw"   default="0.0" /> -->
 
   <!-- ========================= -->
   <!-- 1) Generate heightmap    -->
@@ -93,8 +93,8 @@
       args="-urdf
             -param robot_description
             -model actuated_hexapod_v2
-            -x 0.0 -y 0.0 -z 2.0
-            -R 1.57 -P 0.0 -Y 0.0"
+            -x 0.0 -y 0.0 -z 0.3
+            -R 0.0 -P 4.71 -Y 0.0"
       output="screen" />
 
 
