@@ -21,7 +21,7 @@
         args="$(arg map_file)
               --heightmap_png=$(arg heightmap_png)
               --world_path=$(arg world_path)
-              --max_height=1.0">
+              --max_height=50.0">
     <!-- IMPORTANT: do NOT set required="true" here -->
   </node>
 

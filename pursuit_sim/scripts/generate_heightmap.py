@@ -209,6 +209,11 @@ def write_world_with_inlined_heightmap(world_path: str,
     That means the image covers:
       x ∈ [0, world_size_x]
       y ∈ [-world_size_y, 0]
+
+    Physics is effectively disabled:
+      - gravity = 0
+      - physics type=ode but max_step_size=0 and real_time_update_rate=0
+      - no <ode> solver/contact tuning → no ODE stepping used
     """
     world_dir = os.path.dirname(world_path)
     if world_dir:
@@ -229,38 +234,68 @@ def write_world_with_inlined_heightmap(world_path: str,
     print(f"[world] Heightmap center placed at ({center_x}, {center_y}) "
           f"so top-left is at (0,0) in world.")
 
+    # Use lower thresholds so high ground visually pops
+    # max_height might be ~0.5–1.0; we emphasize heights above ~0.1 m
+    wall_height_start = max_height * 0.2  # start "building/wall" texture at 20% of max
+
     world_xml = textwrap.dedent(f"""\
         <?xml version="1.0" ?>
         <sdf version="1.6">
           <world name="terrain_world">
 
+            <!-- Disable physics: no gravity, no stepping -->
+            <gravity>0 0 0</gravity>
             <physics type="ode">
-              <max_step_size>0.001</max_step_size>
-              <real_time_update_rate>1000</real_time_update_rate>
+              <max_step_size>0.0</max_step_size>
+              <real_time_update_rate>0.0</real_time_update_rate>
               <real_time_factor>1.0</real_time_factor>
-              <ode>
-                <solver>
-                  <type>quick</type>
-                  <iters>250</iters>
-                  <sor>0.5</sor>
-                </solver>
-                <constraints>
-                  <cfm>1e-5</cfm>
-                  <erp>0.2</erp>
-                  <contact_max_correcting_vel>5.0</contact_max_correcting_vel>
-                  <contact_surface_layer>0.001</contact_surface_layer>
-                </constraints>
-              </ode>
             </physics>
 
-            <include>
-              <uri>model://sun</uri>
-            </include>
+            <!-- Point lights only: no sun -->
+            <light type="point" name="point_light_center">
+              <pose>{world_size_x/2.0} {-world_size_y/2.0} {max_height*3.0} 0 0 0</pose>
+              <diffuse>1 1 1 1</diffuse>
+              <specular>0.5 0.5 0.5 1</specular>
+              <attenuation>
+                <range>{max(world_size_x, world_size_y)}</range>
+                <constant>0.4</constant>
+                <linear>0.01</linear>
+                <quadratic>0.001</quadratic>
+              </attenuation>
+              <cast_shadows>true</cast_shadows>
+            </light>
+
+            <light type="point" name="point_light_north">
+              <pose>{world_size_x/2.0} 0 {max_height*4.0} 0 0 0</pose>
+              <diffuse>0.9 0.9 1 1</diffuse>
+              <specular>0.4 0.4 0.6 1</specular>
+              <attenuation>
+                <range>{max(world_size_x, world_size_y)}</range>
+                <constant>0.5</constant>
+                <linear>0.02</linear>
+                <quadratic>0.002</quadratic>
+              </attenuation>
+              <cast_shadows>true</cast_shadows>
+            </light>
+
+            <light type="point" name="point_light_south">
+              <pose>{world_size_x/2.0} {-world_size_y} {max_height*4.0} 0 0 0</pose>
+              <diffuse>1 0.95 0.9 1</diffuse>
+              <specular>0.6 0.5 0.4 1</specular>
+              <attenuation>
+                <range>{max(world_size_x, world_size_y)}</range>
+                <constant>0.5</constant>
+                <linear>0.02</linear>
+                <quadratic>0.002</quadratic>
+              </attenuation>
+              <cast_shadows>true</cast_shadows>
+            </light>
 
             <model name="{model_name}">
               <static>true</static>
               <link name="terrain_link">
 
+                <!-- Collision is still defined but physics stepping is disabled, so this is effectively visual only -->
                 <collision name="terrain_collision">
                   <geometry>
                     <heightmap>
@@ -269,26 +304,6 @@ def write_world_with_inlined_heightmap(world_path: str,
                       <pos>{center_x} {center_y} 0</pos>
                     </heightmap>
                   </geometry>
-
-                  <surface>
-                    <friction>
-                      <ode>
-                        <mu>100.0</mu>
-                        <mu2>100.0</mu2>
-                        <slip1>0.0</slip1>
-                        <slip2>0.0</slip2>
-                      </ode>
-                    </friction>
-
-                    <contact>
-                      <ode>
-                        <kp>1000000.0</kp>
-                        <kd>10.0</kd>
-                        <max_vel>0.01</max_vel>
-                        <min_depth>0.001</min_depth>
-                      </ode>
-                    </contact>
-                  </surface>
                 </collision>
 
                 <visual name="terrain_visual">
@@ -298,19 +313,35 @@ def write_world_with_inlined_heightmap(world_path: str,
                       <size>{world_size_x} {world_size_y} {max_height}</size>
                       <pos>{center_x} {center_y} 0</pos>
 
+                      <!-- Base ground texture -->
                       <texture>
                         <diffuse>file://media/materials/textures/dirt_diffusespecular.png</diffuse>
                         <normal>file://media/materials/textures/flat_normal.png</normal>
                         <size>10</size>
                       </texture>
 
+                      <!-- Higher-elevation "building/wall" texture -->
+                      <texture>
+                        <diffuse>file://media/materials/textures/terrain_detail.jpg</diffuse>
+                        <normal>file://media/materials/textures/flat_normal.png</normal>
+                        <size>4</size>
+                      </texture>
+
+                      <!-- Ground: everything from 0 up -->
                       <blend>
                         <min_height>0.0</min_height>
-                        <fade_dist>1.0</fade_dist>
+                        <fade_dist>0.05</fade_dist>
+                      </blend>
+
+                      <!-- Walls/buildings: anything above ~20% of max_height -->
+                      <blend>
+                        <min_height>{wall_height_start}</min_height>
+                        <fade_dist>0.05</fade_dist>
                       </blend>
                     </heightmap>
                   </geometry>
 
+                  <!-- Tint on top of the textures -->
                   <material>
                     <ambient>{r} {g} {b} 1</ambient>
                     <diffuse>{r} {g} {b} 1</diffuse>
@@ -338,7 +369,7 @@ def write_world_with_inlined_heightmap(world_path: str,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Convert planner map txt into a Gazebo heightmap PNG and world file."
+        description="Convert planner map txt into a Gazebo heightmap PNG and purely-visual world file."
     )
     parser.add_argument("map_file", help="Map txt file (N/C/R/T/M format)")
     parser.add_argument("--heightmap_png",

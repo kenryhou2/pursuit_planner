@@ -321,14 +321,14 @@ class GazeboPursuitViz(object):
     def robot_cb(self, msg):
         if self.robot_name not in self.spawned_models:
             self.ensure_robot_model()
-        rospy.loginfo("Robot position: (%.2f, %.2f, %.2f)", msg.x, msg.y, msg.theta)
+        # rospy.loginfo("Robot position: (%.2f, %.2f, %.2f)", msg.x, msg.y, msg.theta)
         gx, gy, yaw = msg.x, msg.y, msg.theta
         self.set_model_state(self.robot_name, gx, -gy, self.agent_height, yaw=yaw)
 
     def target_cb(self, msg):
         if self.target_name not in self.spawned_models:
             self.ensure_target_model()
-        rospy.loginfo("Target position: (%.2f, %.2f, %.2f)", msg.x, msg.y, msg.theta)
+        # rospy.loginfo("Target position: (%.2f, %.2f, %.2f)", msg.x, msg.y, msg.theta)
         gx, gy, yaw = msg.x, msg.y, msg.theta
         self.set_model_state(self.target_name, gx, -gy, self.agent_height, yaw=yaw)
 
