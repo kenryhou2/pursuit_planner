@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import rospy
 from geometry_msgs.msg import Pose2D, Pose
 from gazebo_msgs.srv import SetModelState, SetModelStateRequest
@@ -28,9 +28,6 @@ class GazeboPursuitViz(object):
         self.target_name = rospy.get_param("~target_name", "pursuit_target")
 
         # Topics to subscribe for robot/target (Pose2D)
-        # In your launch you can set these to match the planner ns, e.g.
-        #   robot_topic:  "/pursuit_planner/robot_pose"
-        #   target_topic: "/pursuit_planner/target_pose"
         self.robot_topic  = rospy.get_param("~robot_topic",  "robot_pose")
         self.target_topic = rospy.get_param("~target_topic", "target_pose")
 
@@ -262,10 +259,15 @@ class GazeboPursuitViz(object):
 
     def make_agent_sdf(self, name, color="0 1 0 1"):
         """
-        Simple small cylinder used for robot/target. Color is 'r g b a'.
+        Tall, skinny cylinder used for robot/target.
+        Color is 'r g b a'.
+
+        With resolution = 1.0:
+          - radius = 0.25 m
+          - height = 1.5 m
         """
-        radius = 0.3 * self.resolution
-        length = 0.4  # height
+        radius = 1 * self.resolution
+        height = self.wall_height
 
         return """<?xml version="1.0"?>
 <sdf version="1.6">
@@ -273,22 +275,24 @@ class GazeboPursuitViz(object):
     <static>false</static>
     <link name="link">
       <inertial>
-        <mass>1.0</mass>
-        <inertia ixx="0.1" iyy="0.1" izz="0.1" ixy="0" ixz="0" iyz="0"/>
+        <mass>2.0</mass>
+        <inertia ixx="0.2" iyy="0.2" izz="0.2" ixy="0" ixz="0" iyz="0"/>
       </inertial>
+
       <collision name="collision">
         <geometry>
           <cylinder>
             <radius>{r}</radius>
-            <length>{l}</length>
+            <length>{h}</length>
           </cylinder>
         </geometry>
       </collision>
+
       <visual name="visual">
         <geometry>
           <cylinder>
             <radius>{r}</radius>
-            <length>{l}</length>
+            <length>{h}</length>
           </cylinder>
         </geometry>
         <material>
@@ -296,9 +300,11 @@ class GazeboPursuitViz(object):
           <diffuse>{c}</diffuse>
         </material>
       </visual>
+
     </link>
   </model>
-</sdf>""".format(name=name, r=radius, l=length, c=color)
+</sdf>""".format(name=name, r=radius, h=height, c=color)
+
 
     # ------------------------------------------------
     # Callbacks
@@ -310,21 +316,21 @@ class GazeboPursuitViz(object):
 
         gx, gy = msg.x, msg.y
         # Obstacles are rendered as tall walls (z = wall_height)
-        self.set_model_state(oid, gx, gy, self.wall_height)
+        self.set_model_state(oid, gx, -gy, self.wall_height)
 
     def robot_cb(self, msg):
         if self.robot_name not in self.spawned_models:
             self.ensure_robot_model()
-
+        rospy.loginfo("Robot position: (%.2f, %.2f, %.2f)", msg.x, msg.y, msg.theta)
         gx, gy, yaw = msg.x, msg.y, msg.theta
-        self.set_model_state(self.robot_name, gx, gy, self.agent_height, yaw=yaw)
+        self.set_model_state(self.robot_name, gx, -gy, self.agent_height, yaw=yaw)
 
     def target_cb(self, msg):
         if self.target_name not in self.spawned_models:
             self.ensure_target_model()
-
+        rospy.loginfo("Target position: (%.2f, %.2f, %.2f)", msg.x, msg.y, msg.theta)
         gx, gy, yaw = msg.x, msg.y, msg.theta
-        self.set_model_state(self.target_name, gx, gy, self.agent_height, yaw=yaw)
+        self.set_model_state(self.target_name, gx, -gy, self.agent_height, yaw=yaw)
 
 
 def main():

@@ -51,7 +51,7 @@ def parse_mapfile(filename):
             row = list(map(float, line.strip().split(',')))
             costmap.append(row)
 
-        # Match your visualizer convention: columns are x, rows are y, then transpose
+        # Match visualizer convention: columns are x, rows are y, then transpose
         costmap = np.asarray(costmap).T
 
     return x_size, y_size, collision_threshold, robotX, robotY, target_trajectory, costmap
@@ -66,13 +66,12 @@ def next_2n_plus1(n: int) -> int:
     if n <= 2:
         return 2  # Minimum reasonable size
     k = 0
-    # We want 2^k + 1 >= n  =>  2^k >= n - 1
     while (1 << k) < (n - 1):
         k += 1
     return (1 << k) + 1
 
 
-def pad_costmap_for_heightmap(arr: np.ndarray) -> np.ndarray:
+def pad_costmap_for_heightmap(arr: np.ndarray):
     """
     Gazebo classic heightmap requirements:
       - Image must be square
@@ -81,20 +80,24 @@ def pad_costmap_for_heightmap(arr: np.ndarray) -> np.ndarray:
     We:
       1) Take max(h, w) of the original array
       2) Compute the smallest side >= max(h, w) of the form 2^n + 1
-      3) Pad symmetrically with the minimum cost value
+      3) Pad with the minimum cost value
+
+    IMPORTANT:
+      - Padding is applied ONLY to the bottom and right.
+      - Top-left pixel (0,0) of the original map stays at (0,0) of the image.
+
+    Returns:
+      padded_arr, pad_x_after, pad_y_after
     """
     h, w = arr.shape  # (rows, cols) = (y, x)
     c_min = float(arr.min())
 
     target_side = next_2n_plus1(max(h, w))
 
-    pad_y_total = target_side - h
-    pad_x_total = target_side - w
-
-    pad_y_before = pad_y_total // 2
-    pad_y_after  = pad_y_total - pad_y_before
-    pad_x_before = pad_x_total // 2
-    pad_x_after  = pad_x_total - pad_x_before
+    pad_y_before = 0
+    pad_x_before = 0
+    pad_y_after = target_side - h
+    pad_x_after = target_side - w
 
     padded = np.pad(
         arr,
@@ -104,8 +107,10 @@ def pad_costmap_for_heightmap(arr: np.ndarray) -> np.ndarray:
     )
 
     print(f"[heightmap] Padded costmap from {h}x{w} to {target_side}x{target_side} (2^n+1)")
+    print(f"[heightmap] Pad y: before={pad_y_before}, after={pad_y_after}")
+    print(f"[heightmap] Pad x: before={pad_x_before}, after={pad_x_after}")
 
-    return padded
+    return padded, pad_x_after, pad_y_after
 
 
 def costmap_to_heightmap_png(costmap: np.ndarray,
@@ -116,15 +121,20 @@ def costmap_to_heightmap_png(costmap: np.ndarray,
     Convert a 2D costmap array into a PNG suitable for Gazebo heightmap.
 
     - Pads to square 2^n+1 × 2^n+1
+      (padding only on bottom and right → origin at top-left preserved)
     - Normalizes cost range [c_min, c_max] to [0, 1]
-    - Encodes as either:
+    - Encodes as:
         * 8-bit grayscale (mode 'L') if bit_depth == 8  [RECOMMENDED]
         * 16-bit grayscale (mode 'I;16') if bit_depth == 16
-    """
-    # 1) Pad to square with side length 2^n + 1
-    arr = np.array(costmap, dtype=np.float32)
-    arr = pad_costmap_for_heightmap(arr)
 
+    Returns:
+        img_width, img_height, pad_x_after, pad_y_after
+    """
+    arr = np.array(costmap, dtype=np.float32)
+    original_h, original_w = arr.shape
+    arr, pad_x_after, pad_y_after = pad_costmap_for_heightmap(arr)
+
+    padded_h, padded_w = arr.shape
     c_min, c_max = float(arr.min()), float(arr.max())
 
     if c_max > c_min:
@@ -137,35 +147,68 @@ def costmap_to_heightmap_png(costmap: np.ndarray,
         os.makedirs(out_dir, exist_ok=True)
 
     if bit_depth == 16:
-        # 16-bit grayscale
         img_vals = (norm * 65535.0).clip(0, 65535).astype(np.uint16)
         img = Image.fromarray(img_vals, mode="I;16")
     else:
-        # 8-bit grayscale (default / safer for Gazebo)
         img_vals = (norm * 255.0).clip(0, 255).astype(np.uint8)
         img = Image.fromarray(img_vals, mode="L")
 
     img.save(out_path)
-    print(f"[heightmap] Saved {out_path}, padded shape={arr.shape}, "
+    print(f"[heightmap] Saved {out_path}, "
+          f"original={original_w}x{original_h}, padded={padded_w}x{padded_h}, "
           f"bit_depth={bit_depth}, cost range [{c_min}, {c_max}], "
           f"height [0, {max_height}] m (via <size> in world)")
 
+    return padded_w, padded_h, pad_x_after, pad_y_after
+
+
+def compute_heightmap_center_top_left(world_size_x: float, world_size_y: float):
+    """
+    Compute the <pos> (center) of the heightmap so that its TOP-LEFT corner
+    lies at world (0,0).
+
+    Heightmap extents in world will be:
+      x ∈ [0, world_size_x]
+      y ∈ [-world_size_y, 0]
+
+    Gazebo interprets <pos> as the *center* of the heightmap geometry.
+    To get top-left at (0,0), we place the center at:
+
+      center_x = world_size_x / 2
+      center_y = -world_size_y / 2
+    """
+    center_x = world_size_x / 2.0
+    center_y = -world_size_y / 2.0
+    return center_x, center_y
 
 
 def write_world_with_inlined_heightmap(world_path: str,
                                        png_path: str,
-                                       x_size: int,
-                                       y_size: int,
+                                       world_size_x: float,
+                                       world_size_y: float,
+                                       img_width: int,
+                                       img_height: int,
                                        max_height: float,
                                        model_name: str = "terrain_from_map",
                                        color_rgb=(0.5, 0.5, 0.5)):
     """
     Create a Gazebo world that inlines a heightmap model referencing the given PNG.
 
-    - The heightmap image itself is square 2^n+1×2^n+1.
+    - Heightmap image is square 2^n+1×2^n+1.
     - <size> in SDF is the physical size in meters that the image spans.
-      We set it to (x_size, y_size, max_height) so it matches your planner grid.
-    - color_rgb: (R,G,B) floats in [0,1] for the visual material.
+
+    Here we set:
+      world_size_x = img_width  * meters_per_cell
+      world_size_y = img_height * meters_per_cell
+
+    With meters_per_cell = 1.0:
+      1 image pixel = 1 meter in both x and y.
+
+    We place the heightmap so that its TOP-LEFT corner is at (0,0) in world
+    coordinates by centering it at (world_size_x/2, -world_size_y/2).
+    That means the image covers:
+      x ∈ [0, world_size_x]
+      y ∈ [-world_size_y, 0]
     """
     world_dir = os.path.dirname(world_path)
     if world_dir:
@@ -176,22 +219,29 @@ def write_world_with_inlined_heightmap(world_path: str,
 
     r, g, b = color_rgb
 
+    res_x = world_size_x / float(img_width)
+    res_y = world_size_y / float(img_height)
+    print(f"[world] Physical size: {world_size_x} x {world_size_y} m")
+    print(f"[world] Image size:    {img_width} x {img_height} px")
+    print(f"[world] Resolution:    {res_x:.4f} m/px (x), {res_y:.4f} m/px (y)")
+
+    center_x, center_y = compute_heightmap_center_top_left(world_size_x, world_size_y)
+    print(f"[world] Heightmap center placed at ({center_x}, {center_y}) "
+          f"so top-left is at (0,0) in world.")
+
     world_xml = textwrap.dedent(f"""\
         <?xml version="1.0" ?>
         <sdf version="1.6">
           <world name="terrain_world">
 
-            <!-- Physics settings for better contact -->
             <physics type="ode">
-              <!-- smaller step size + more iterations = better contact, more CPU -->
-              <max_step_size>0.001</max_step_size>          <!-- 1 ms -->
+              <max_step_size>0.001</max_step_size>
               <real_time_update_rate>1000</real_time_update_rate>
               <real_time_factor>1.0</real_time_factor>
-
               <ode>
                 <solver>
-                  <type>quick</type>                        <!-- or "world" -->
-                  <iters>250</iters>                         <!-- try 50–100 -->
+                  <type>quick</type>
+                  <iters>250</iters>
                   <sor>0.5</sor>
                 </solver>
                 <constraints>
@@ -207,7 +257,6 @@ def write_world_with_inlined_heightmap(world_path: str,
               <uri>model://sun</uri>
             </include>
 
-            <!-- Inlined heightmap model -->
             <model name="{model_name}">
               <static>true</static>
               <link name="terrain_link">
@@ -216,19 +265,16 @@ def write_world_with_inlined_heightmap(world_path: str,
                   <geometry>
                     <heightmap>
                       <uri>{png_uri}</uri>
-                      <size>{x_size} {y_size} {max_height}</size>
-                      <pos>0 0 0</pos>
+                      <size>{world_size_x} {world_size_y} {max_height}</size>
+                      <pos>{center_x} {center_y} 0</pos>
                     </heightmap>
                   </geometry>
 
-                  <!-- NEW: contact + friction settings -->
                   <surface>
                     <friction>
                       <ode>
-                        <!-- high friction in both tangential directions -->
                         <mu>100.0</mu>
                         <mu2>100.0</mu2>
-                        <!-- no intentional slip -->
                         <slip1>0.0</slip1>
                         <slip2>0.0</slip2>
                       </ode>
@@ -236,8 +282,7 @@ def write_world_with_inlined_heightmap(world_path: str,
 
                     <contact>
                       <ode>
-                        <!-- contact stiffness / damping -->
-                        <kp>1000000.0</kp>        <!-- 1e5 -->
+                        <kp>1000000.0</kp>
                         <kd>10.0</kd>
                         <max_vel>0.01</max_vel>
                         <min_depth>0.001</min_depth>
@@ -250,17 +295,15 @@ def write_world_with_inlined_heightmap(world_path: str,
                   <geometry>
                     <heightmap>
                       <uri>{png_uri}</uri>
-                      <size>{x_size} {y_size} {max_height}</size>
-                      <pos>0 0 0</pos>
+                      <size>{world_size_x} {world_size_y} {max_height}</size>
+                      <pos>{center_x} {center_y} 0</pos>
 
-                      <!-- IMPORTANT: add a valid texture so we don't get the checkerboard -->
                       <texture>
                         <diffuse>file://media/materials/textures/dirt_diffusespecular.png</diffuse>
                         <normal>file://media/materials/textures/flat_normal.png</normal>
                         <size>10</size>
                       </texture>
 
-                      <!-- Single blend layer (no fancy multi-texture) -->
                       <blend>
                         <min_height>0.0</min_height>
                         <fade_dist>1.0</fade_dist>
@@ -268,7 +311,6 @@ def write_world_with_inlined_heightmap(world_path: str,
                     </heightmap>
                   </geometry>
 
-                  <!-- Tint on top of the heightmap texture -->
                   <material>
                     <ambient>{r} {g} {b} 1</ambient>
                     <diffuse>{r} {g} {b} 1</diffuse>
@@ -290,7 +332,6 @@ def write_world_with_inlined_heightmap(world_path: str,
     print(f"[world] Color (RGB): {r}, {g}, {b}")
 
 
-
 # =========================
 # main()
 # =========================
@@ -305,14 +346,14 @@ def main(argv=None):
                         help="Output PNG path for heightmap (default: heightmap.png)")
     parser.add_argument("--world_path",
                         required=True,
-                        help="Output world file path, e.g. $(rospack find pursuit_sim)/worlds/terrain_world.world")
+                        help="Output world file path")
     parser.add_argument("--max_height",
                         type=float,
-                        default=5.0,
-                        help="Max terrain height in meters (default: 5.0)")
+                        default=1.0,
+                        help="Max terrain height in meters (default: 1.0)")
     parser.add_argument("--model_name",
                         default="terrain_from_map",
-                        help="Name of the inlined model in the world (default: terrain_from_map)")
+                        help="Name of the inlined model in the world")
     parser.add_argument(
         "--color",
         nargs=3,
@@ -325,31 +366,57 @@ def main(argv=None):
         "--bit_depth",
         choices=[8, 16],
         type=int,
-        default=16,
-        help="PNG bit depth: 8 or 16 (default: 16)",
+        default=8,
+        help="PNG bit depth: 8 or 16 (default: 8)",
+    )
+    parser.add_argument(
+        "--meters_per_cell",
+        type=float,
+        default=1.0,
+        help="Physical size of each image pixel in meters (default: 1.0).",
     )
 
-    # IMPORTANT: ignore unknown ROS args (__name, __log, etc.)
     if argv is None:
         argv = []
     args, unknown = parser.parse_known_args(argv)
 
-    # 1) Parse map
-    x_size, y_size, _, _, _, _, costmap = parse_mapfile(args.map_file)
-    print(f"[map] Parsed {args.map_file} -> size=({x_size}, {y_size}), costmap.shape={costmap.shape}")
+    x_size, y_size, _, robotX, robotY, target_traj, costmap = parse_mapfile(args.map_file)
+    print(f"[map] Parsed {args.map_file} -> "
+          f"declared size=({x_size}, {y_size}), costmap.shape={costmap.shape}")
+    print(f"[map] Robot start in grid coords: ({robotX}, {robotY})")
 
-    # 2) Generate heightmap PNG (with square 2^n+1 padding)
-    costmap_to_heightmap_png(costmap,
-                             out_path=args.heightmap_png,
-                             max_height=args.max_height,
-                             bit_depth=args.bit_depth)
+    # Generate heightmap PNG (square 2^n+1, bottom/right padding)
+    img_width, img_height, pad_x_after, pad_y_after = costmap_to_heightmap_png(
+        costmap,
+        out_path=args.heightmap_png,
+        max_height=args.max_height,
+        bit_depth=args.bit_depth
+    )
 
-    # 3) Generate world file that inlines the heightmap
+    world_size_x = img_width  * args.meters_per_cell
+    world_size_y = img_height * args.meters_per_cell
+
+    # Mapping info: planner (gx, gy) -> world (x, y) with top-left origin and y-down in planner
+    print("\n[mapping] Planner grid origin (0,0) is TOP-LEFT of ORIGINAL map.")
+    print(f"[mapping] Padding (bottom,right) = (pad_y_after={pad_y_after}, pad_x_after={pad_x_after})")
+    print("[mapping] With meters_per_cell = 1.0 and top-left of heightmap at world (0,0):")
+    print("          x_world = (gx + 0.5)")
+    print("          y_world = -(gy + 0.5)")
+    print("        i.e. planner y-down corresponds to world y-negative.")
+
+    gx, gy = robotX, robotY
+    x_world_robot = (gx + 0.5) * args.meters_per_cell
+    y_world_robot = -(gy + 0.5) * args.meters_per_cell
+    print(f"[mapping] Example: robot grid ({gx},{gy}) -> world ≈ ({x_world_robot:.3f}, {y_world_robot:.3f})")
+
+    # Write world file
     write_world_with_inlined_heightmap(
         world_path=args.world_path,
         png_path=args.heightmap_png,
-        x_size=x_size,
-        y_size=y_size,
+        world_size_x=world_size_x,
+        world_size_y=world_size_y,
+        img_width=img_width,
+        img_height=img_height,
         max_height=args.max_height,
         model_name=args.model_name,
         color_rgb=args.color,
@@ -363,6 +430,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     import sys
-    # pass only *our* args to argparse, skip ROS extras
     main(sys.argv[1:])
-

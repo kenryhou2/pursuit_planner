@@ -2,17 +2,14 @@
 <sdf version="1.6">
   <world name="terrain_world">
 
-    <!-- Physics settings for better contact -->
     <physics type="ode">
-      <!-- smaller step size + more iterations = better contact, more CPU -->
-      <max_step_size>0.001</max_step_size>          <!-- 1 ms -->
+      <max_step_size>0.001</max_step_size>
       <real_time_update_rate>1000</real_time_update_rate>
       <real_time_factor>1.0</real_time_factor>
-
       <ode>
         <solver>
-          <type>quick</type>                        <!-- or "world" -->
-          <iters>250</iters>                         <!-- try 50–100 -->
+          <type>quick</type>
+          <iters>250</iters>
           <sor>0.5</sor>
         </solver>
         <constraints>
@@ -28,7 +25,6 @@
       <uri>model://sun</uri>
     </include>
 
-    <!-- Inlined heightmap model -->
     <model name="terrain_from_map">
       <static>true</static>
       <link name="terrain_link">
@@ -37,19 +33,16 @@
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>473 436 5.0</size>
-              <pos>0 0 0</pos>
+              <size>513.0 513.0 1.0</size>
+              <pos>256.5 -256.5 0</pos>
             </heightmap>
           </geometry>
 
-          <!-- NEW: contact + friction settings -->
           <surface>
             <friction>
               <ode>
-                <!-- high friction in both tangential directions -->
                 <mu>100.0</mu>
                 <mu2>100.0</mu2>
-                <!-- no intentional slip -->
                 <slip1>0.0</slip1>
                 <slip2>0.0</slip2>
               </ode>
@@ -57,8 +50,7 @@
 
             <contact>
               <ode>
-                <!-- contact stiffness / damping -->
-                <kp>1000000.0</kp>        <!-- 1e5 -->
+                <kp>1000000.0</kp>
                 <kd>10.0</kd>
                 <max_vel>0.01</max_vel>
                 <min_depth>0.001</min_depth>
@@ -71,17 +63,15 @@
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>473 436 5.0</size>
-              <pos>0 0 0</pos>
+              <size>513.0 513.0 1.0</size>
+              <pos>256.5 -256.5 0</pos>
 
-              <!-- IMPORTANT: add a valid texture so we don't get the checkerboard -->
               <texture>
                 <diffuse>file://media/materials/textures/dirt_diffusespecular.png</diffuse>
                 <normal>file://media/materials/textures/flat_normal.png</normal>
                 <size>10</size>
               </texture>
 
-              <!-- Single blend layer (no fancy multi-texture) -->
               <blend>
                 <min_height>0.0</min_height>
                 <fade_dist>1.0</fade_dist>
@@ -89,7 +79,6 @@
             </heightmap>
           </geometry>
 
-          <!-- Tint on top of the heightmap texture -->
           <material>
             <ambient>0.7 0.7 0.7 1</ambient>
             <diffuse>0.7 0.7 0.7 1</diffuse>

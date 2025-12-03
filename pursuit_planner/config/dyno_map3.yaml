@@ -2,7 +2,7 @@ dynamic_obstacles:
   - id: obs0
     footprint:
       kind: circle
-      radius: 25
+      radius: 2
     waypoints:
       - x: 10
         y: 5
@@ -20,7 +20,7 @@ dynamic_obstacles:
   - id: obs1
     footprint:
       kind: box
-      width: 30
+      width: 10
       height: 20
     waypoints:
       - x: 30

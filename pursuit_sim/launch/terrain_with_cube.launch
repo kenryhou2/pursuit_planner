@@ -7,6 +7,10 @@
   <arg name="world_path"
        default="$(find pursuit_sim)/worlds/terrain_world.world" />
 
+<!-- Planner node -->
+  <arg name="planner_ns" default="pursuit_planner/pursuit_planner_node" />
+
+
   <!-- 1) Generate heightmap + world BEFORE / ALONGSIDE Gazebo -->
   <node name="generate_heightmap"
         pkg="pursuit_sim"
@@ -17,7 +21,7 @@
         args="$(arg map_file)
               --heightmap_png=$(arg heightmap_png)
               --world_path=$(arg world_path)
-              --max_height=5.0">
+              --max_height=1.0">
     <!-- IMPORTANT: do NOT set required="true" here -->
   </node>
 
@@ -33,13 +37,27 @@
         type="gzclient"
         output="screen" />
 
-  <!-- 3) Spawn cube robot model -->
-  <node name="spawn_cube_robot"
-        pkg="gazebo_ros"
-        type="spawn_model"
-        output="screen"
-        args="-sdf
-              -file $(find pursuit_sim)/models/cube_robot/model.sdf
-              -model cube_robot
-              -x 5.0 -y 5.0 -z 2.0 -Y 0.0"/>
+
+<!-- Visualization node -->
+  <node pkg="pursuit_sim"
+        type="gazebo_obj_handler.py"
+        name="gazebo_object_visualizer"
+        output="screen">
+    <!-- Make topics line up with planner ns -->
+    <param name="robot_topic"  value="/$(arg planner_ns)/robot_pose" />
+    <param name="target_topic" value="/$(arg planner_ns)/target_pose" />
+
+    <!-- Same dyno YAML used by the planner -->
+    <param name="dyno_yaml" value="$(find pursuit_planner)/config/dyno_map3.yaml" />
+
+    <!-- Optionally list obstacle IDs explicitly if you want -->
+    <!-- <param name="obstacle_ids" value="['ob1','ob2']" /> -->
+
+    <!-- Grid-to-world mapping -->
+    <param name="resolution" value="1.0" />
+    <param name="origin_x"   value="0.0" />
+    <param name="origin_y"   value="0.0" />
+  </node>
+
+
 </launch>
