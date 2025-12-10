@@ -46,6 +46,9 @@
     <!-- Make topics line up with planner ns -->
     <param name="robot_topic"  value="/$(arg planner_ns)/robot_pose" />
     <param name="target_topic" value="/$(arg planner_ns)/target_pose" />
+    <param name="update_rate" value="100.0" />        <!-- Hz -->
+    <param name="segment_duration" value="1.0" />    <!-- sec between waypoints at replay_speed=1 -->
+    <param name="replay_speed" value="1.0" />        <!-- 2.0 = twice as fast, 0.5 = half speed -->
 
     <!-- Same dyno YAML used by the planner -->
     <param name="dyno_yaml" value="$(find pursuit_planner)/config/dyno_map3.yaml" />

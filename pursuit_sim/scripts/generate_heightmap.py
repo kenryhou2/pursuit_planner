@@ -243,11 +243,11 @@ def write_world_with_inlined_heightmap(world_path: str,
         <sdf version="1.6">
           <world name="terrain_world">
 
-            <!-- Disable physics: no gravity, no stepping -->
-            <gravity>0 0 0</gravity>
+            
+            <gravity>0 0 -9.81</gravity>
             <physics type="ode">
-              <max_step_size>0.0</max_step_size>
-              <real_time_update_rate>0.0</real_time_update_rate>
+              <max_step_size>0.001</max_step_size>
+              <real_time_update_rate>1000.0</real_time_update_rate>
               <real_time_factor>1.0</real_time_factor>
             </physics>
 

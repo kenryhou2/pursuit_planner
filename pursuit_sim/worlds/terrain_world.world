@@ -2,17 +2,17 @@
 <sdf version="1.6">
   <world name="terrain_world">
 
-    <!-- Disable physics: no gravity, no stepping -->
-    <gravity>0 0 0</gravity>
+
+    <gravity>0 0 -9.81</gravity>
     <physics type="ode">
-      <max_step_size>0.0</max_step_size>
-      <real_time_update_rate>0.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+      <real_time_update_rate>1000.0</real_time_update_rate>
       <real_time_factor>1.0</real_time_factor>
     </physics>
 
     <!-- Point lights only: no sun -->
     <light type="point" name="point_light_center">
-      <pose>256.5 -256.5 150.0 0 0 0</pose>
+      <pose>256.5 -256.5 15.0 0 0 0</pose>
       <diffuse>1 1 1 1</diffuse>
       <specular>0.5 0.5 0.5 1</specular>
       <attenuation>
@@ -25,7 +25,7 @@
     </light>
 
     <light type="point" name="point_light_north">
-      <pose>256.5 0 200.0 0 0 0</pose>
+      <pose>256.5 0 20.0 0 0 0</pose>
       <diffuse>0.9 0.9 1 1</diffuse>
       <specular>0.4 0.4 0.6 1</specular>
       <attenuation>
@@ -38,7 +38,7 @@
     </light>
 
     <light type="point" name="point_light_south">
-      <pose>256.5 -513.0 200.0 0 0 0</pose>
+      <pose>256.5 -513.0 20.0 0 0 0</pose>
       <diffuse>1 0.95 0.9 1</diffuse>
       <specular>0.6 0.5 0.4 1</specular>
       <attenuation>
@@ -59,7 +59,7 @@
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>513.0 513.0 50.0</size>
+              <size>513.0 513.0 5.0</size>
               <pos>256.5 -256.5 0</pos>
             </heightmap>
           </geometry>
@@ -69,7 +69,7 @@
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>513.0 513.0 50.0</size>
+              <size>513.0 513.0 5.0</size>
               <pos>256.5 -256.5 0</pos>
 
               <!-- Base ground texture -->
@@ -94,7 +94,7 @@
 
               <!-- Walls/buildings: anything above ~20% of max_height -->
               <blend>
-                <min_height>10.0</min_height>
+                <min_height>1.0</min_height>
                 <fade_dist>0.05</fade_dist>
               </blend>
             </heightmap>

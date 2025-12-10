@@ -11,8 +11,8 @@
        default="$(find pursuit_sim)/worlds/terrain_world.world" />
 
   <!-- Eigenbot pose in the world params-->
-<arg name="eigenbot_x" default="1.0"/>
-<arg name="eigenbot_y" default="-1.0"/>
+<arg name="eigenbot_x" default="10.0"/>
+<arg name="eigenbot_y" default="-15.0"/>
 <arg name="eigenbot_z" default="0.3"/>
 <arg name="eigenbot_roll" default="1.57"/>
 <arg name="eigenbot_pitch" default="-1.57"/>
@@ -75,10 +75,10 @@
   <!-- ========================= -->
   <!-- 5) Spawn Eigenbot model  -->
   <!-- ========================= -->
-  <param name="robot_description"
-         textfile="$(find eigenbot_gazebo)/urdf/actuated_hexapod_v2.urdf" />
-      <!-- <param name="robot_description"
-         textfile="$(find eigenbot_gazebo)/urdf/actuated_effort_hexapod_v2.urdf" /> -->
+  <!-- <param name="robot_description"
+         textfile="$(find eigenbot_gazebo)/urdf/actuated_hexapod_v2.urdf" /> -->
+      <param name="robot_description"
+         textfile="$(find eigenbot_gazebo)/urdf/actuated_effort_hexapod_v2.urdf" />
 
   <node name="spawn_eigenbot"
         pkg="gazebo_ros"
@@ -95,13 +95,13 @@
               -Y $(arg eigenbot_yaw)" />
 
   <!-- 4) Load ALL control config (PID + controllers) from ONE YAML -->
-  <rosparam file="$(find eigenbot_gazebo)/config/eigenbot_control.yaml"
-            command="load" />
-      <!-- <rosparam file="$(find eigenbot_gazebo)/config/eigenbot_effort_control.yaml"
+  <!-- <rosparam file="$(find eigenbot_gazebo)/config/eigenbot_control.yaml"
             command="load" /> -->
+      <rosparam file="$(find eigenbot_gazebo)/config/eigenbot_effort_control.yaml"
+            command="load" />
 
   <!-- 5) Spawn controllers via controller_manager -->
-  <node name="eigenbot_controller_spawner"
+  <!-- <node name="eigenbot_controller_spawner"
         pkg="controller_manager"
         type="spawner"
         args="joint_state_controller
@@ -123,8 +123,8 @@
               bendy_joint_M16_S16_position_controller
               bendy_joint_M17_S17_position_controller
               bendy_joint_M18_S18_position_controller"
-        output="screen" />
-      <!-- <node name="eigenbot_controller_spawner"
+        output="screen" /> -->
+      <node name="eigenbot_controller_spawner"
       pkg="controller_manager"
       type="spawner"
       args="joint_state_controller
@@ -146,7 +146,7 @@
             bendy_joint_M16_S16_effort_controller
             bendy_joint_M17_S17_effort_controller
             bendy_joint_M18_S18_effort_controller"
-      output="screen" /> -->
+      output="screen" />
 
   <!-- 6) Gazebo bridge -->
   <node name="eigenbot_gazebo_bridge"
@@ -160,10 +160,10 @@
         type="legged_joint_controller.py"
         output="screen" /> -->
 
-  <!-- <node name="eigenbot_legged_effort_controller"
+  <node name="eigenbot_legged_effort_controller"
         pkg="eigenbot_gazebo"
         type="legged_joint_effort_controller.py"
-        output="screen" /> -->
+        output="screen" />
   <!-- 8) Trajectory follower (high-level /cmd_vel source) -->
   <!-- <node name="eigenbot_trajectory_follower"
         pkg="eigenbot_gazebo"
