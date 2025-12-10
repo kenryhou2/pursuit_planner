@@ -60,6 +60,15 @@ class DynamicTrajectoryReplay(object):
             rospy.logwarn("replay_speed must be > 0. Using 1.0 instead.")
             self.replay_speed = 1.0
 
+        # Robot trail parameters
+        self.trail_enabled = rospy.get_param("~trail_enabled", True)
+        self.trail_stride  = rospy.get_param("~trail_stride", 5)      # place a trail marker every N interp steps
+        self.trail_radius  = rospy.get_param("~trail_radius", 0.3)    # meters (radius of cylinder)
+        self.trail_height  = rospy.get_param("~trail_height", 0.05)   # meters (height of cylinder)
+        self.trail_alpha   = rospy.get_param("~trail_alpha", 0.4)     # transparency (0–1)
+        self.trail_prefix  = rospy.get_param("~trail_prefix", "robot_trail")
+        self.trail_counter = 0
+
         self.loop = rospy.get_param("~loop", False)
 
         rospy.loginfo("DynamicTrajectoryReplay (Python3)")
@@ -68,6 +77,7 @@ class DynamicTrajectoryReplay(object):
         rospy.loginfo("meters_per_cell (resolution) = %.4f", self.meters_per_cell)
         rospy.loginfo("interp_rate = %.1f Hz", self.interp_rate)
         rospy.loginfo("replay_speed = %.2f x", self.replay_speed)
+        rospy.loginfo("trail_enabled = %s, stride = %d", self.trail_enabled, self.trail_stride)
 
         # Data containers
         self.time_stamps    = []
@@ -218,11 +228,30 @@ class DynamicTrajectoryReplay(object):
         return wx, wy
 
     # ==========================================================
-    # SDF GENERATORS (circle / box / robot sphere)
+    # SDF GENERATORS (circle / box / robot sphere / trail)
     # ==========================================================
+    def _terrain_like_material(self):
+        """
+        Return a material block that visually matches terrain style:
+        uses Gazebo/Rocky with neutral grey-ish ambient/diffuse.
+        """
+        return """\
+        <material>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Rocky</name>
+          </script>
+          <ambient>0.7 0.7 0.7 1</ambient>
+          <diffuse>0.7 0.7 0.7 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+          <emissive>0 0 0 1</emissive>
+        </material>"""
+
     def _make_circle_sdf(self, name, radius_cells):
         radius = radius_cells * self.meters_per_cell
         height = self.obstacle_height
+
+        mat = self._terrain_like_material()
 
         sdf = f"""<?xml version="1.0" ?>
 <sdf version="1.6">
@@ -236,7 +265,7 @@ class DynamicTrajectoryReplay(object):
           <ixy>0.0</ixy><ixz>0.0</ixz><iyz>0.0</iyz>
         </inertia>
       </inertial>
-     
+
       <visual name="visual">
         <geometry>
           <cylinder>
@@ -244,10 +273,7 @@ class DynamicTrajectoryReplay(object):
             <length>{height}</length>
           </cylinder>
         </geometry>
-        <material>
-          <ambient>0 0 1 1</ambient>
-          <diffuse>0 0 1 1</diffuse>
-        </material>
+{mat}
       </visual>
     </link>
   </model>
@@ -260,6 +286,8 @@ class DynamicTrajectoryReplay(object):
         size_y = height_cells * self.meters_per_cell
         size_z = self.obstacle_height + 0.5  # small extra to avoid z-fighting
 
+        mat = self._terrain_like_material()
+
         sdf = f"""<?xml version="1.0" ?>
 <sdf version="1.6">
   <model name="{name}">
@@ -272,17 +300,14 @@ class DynamicTrajectoryReplay(object):
           <ixy>0.0</ixy><ixz>0.0</ixz><iyz>0.0</iyz>
         </inertia>
       </inertial>
-      
+
       <visual name="visual">
         <geometry>
           <box>
             <size>{size_x} {size_y} {size_z}</size>
           </box>
         </geometry>
-        <material>
-          <ambient>1 0 0 1</ambient>
-          <diffuse>1 0 0 1</diffuse>
-        </material>
+{mat}
       </visual>
     </link>
   </model>
@@ -307,7 +332,7 @@ class DynamicTrajectoryReplay(object):
           <ixy>0.0</ixy><ixz>0.0</ixz><iyz>0.0</iyz>
         </inertia>
       </inertial>
-     
+
       <visual name="visual">
         <geometry>
           <sphere>
@@ -317,6 +342,47 @@ class DynamicTrajectoryReplay(object):
         <material>
           <ambient>0 1 0 1</ambient>
           <diffuse>0 1 0 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
+"""
+        return sdf
+
+    def _make_trail_sdf(self, name):
+        """
+        Transparent green cylinder "footprint" for robot trail.
+        """
+        r = self.trail_radius
+        h = self.trail_height
+        a = self.trail_alpha
+        sdf = f"""<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="{name}">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <geometry>
+          <cylinder>
+            <radius>{r}</radius>
+            <length>{h}</length>
+          </cylinder>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <cylinder>
+            <radius>{r}</radius>
+            <length>{h}</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0 1 0 {a}</ambient>
+          <diffuse>0 1 0 {a}</diffuse>
+          <specular>0.1 0.1 0.1 {a}</specular>
+          <emissive>0 0 0 1</emissive>
         </material>
       </visual>
     </link>
@@ -455,6 +521,41 @@ class DynamicTrajectoryReplay(object):
             rospy.logwarn("Failed to move robot '%s': %s", self.robot_name, str(e))
 
     # ==========================================================
+    # TRAIL SPAWNING
+    # ==========================================================
+    def spawn_trail_point_grid(self, gx, gy):
+        """
+        Spawn a small transparent marker at the given grid coord.
+        """
+        if not self.trail_enabled:
+            return
+
+        wx, wy = self.grid_to_world(gx, gy)
+
+        name = f"{self.trail_prefix}_{self.trail_counter:05d}"
+        self.trail_counter += 1
+
+        sdf_xml = self._make_trail_sdf(name)
+
+        pose = Pose()
+        pose.position.x = wx
+        pose.position.y = wy
+        # Slightly above terrain to avoid z-fighting
+        pose.position.z = self.z_base + 0.01
+        pose.orientation.w = 1.0
+
+        try:
+            self.spawn_model(
+                model_name=name,
+                model_xml=sdf_xml,
+                robot_namespace=name,
+                initial_pose=pose,
+                reference_frame="world",
+            )
+        except rospy.ServiceException as e:
+            rospy.logwarn("Failed to spawn trail model '%s': %s", name, str(e))
+
+    # ==========================================================
     # REPLAY WITH INTERPOLATION + REPLAY SPEED
     # ==========================================================
     def replay_once(self):
@@ -469,6 +570,11 @@ class DynamicTrajectoryReplay(object):
         if n_steps < 2:
             rospy.logwarn("Not enough steps for interpolation.")
             return
+
+        # reset trail counter for this run (names still unique if looping)
+        self.trail_counter = 0
+
+        step_counter = 0  # counts interpolation steps for trail_stride
 
         for i in range(n_steps - 1):
             if rospy.is_shutdown():
@@ -522,6 +628,12 @@ class DynamicTrajectoryReplay(object):
                 gy_r = gy_r0 + alpha * (gy_r1 - gy_r0)
                 self.send_robot_state(gx_r, gy_r)
 
+                # Drop trail markers at stride intervals
+                if self.trail_enabled and (step_counter % self.trail_stride == 0):
+                    self.spawn_trail_point_grid(gx_r, gy_r)
+
+                step_counter += 1
+
                 # Obstacles interpolation
                 for name in self.obstacle_names:
                     gx0, gy0 = obs_p0[name]
@@ -537,6 +649,8 @@ class DynamicTrajectoryReplay(object):
         if final_idx < len(self.robot_traj):
             gx_r, gy_r = self.robot_traj[final_idx]
             self.send_robot_state(gx_r, gy_r)
+            if self.trail_enabled:
+                self.spawn_trail_point_grid(gx_r, gy_r)
 
         for name in self.obstacle_names:
             data = self.obstacle_data[name]

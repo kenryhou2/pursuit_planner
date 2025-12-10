@@ -56,7 +56,13 @@
     <!-- Repeat animation -->
     <param name="loop" value="true"/>
     <param name="interp_rate" value="40.0"/>
-    <param name="replay_speed" value="10.0"/> 
+    <param name="replay_speed" value="10.0"/>
+    <param name="trail_enabled" value="true"/>
+    <param name="trail_stride"  value="5"/>
+    <param name="trail_radius"  value="0.3"/>
+    <param name="trail_height"  value="0.05"/>
+    <param name="trail_alpha"   value="0.4"/>
+
 
   </node>
 

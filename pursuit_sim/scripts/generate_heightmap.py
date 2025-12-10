@@ -375,17 +375,7 @@ def write_world_with_inlined_heightmap(world_path: str,
                         <size>4</size>
                       </texture>
 
-                      <!-- Ground: everything from 0 up -->
-                      <blend>
-                        <min_height>0.0</min_height>
-                        <fade_dist>0.05</fade_dist>
-                      </blend>
-
-                      <!-- Walls/buildings: anything above ~20% of max_height -->
-                      <blend>
-                        <min_height>{wall_height_start}</min_height>
-                        <fade_dist>0.05</fade_dist>
-                      </blend>
+                      
                     </heightmap>
                   </geometry>
 
