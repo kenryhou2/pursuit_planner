@@ -1,0 +1,126 @@
+dynamic_obstacles: 
+  # Obstacle 1: Crosses diagonal around (7,7) at time ~6-8
+  # Moves horizontally from left to right across the diagonal
+  - id: obs1
+    footprint:
+      kind: circle
+      radius: 1.5
+    waypoints:
+      - x: 1
+        y: 7
+        duration: 2
+      - x: 2
+        y: 7
+        duration: 1
+      - x: 3
+        y: 7
+        duration: 1
+      - x: 5
+        y: 7
+        duration: 1
+      - x: 6
+        y: 7
+        duration: 1
+      - x: 7
+        y: 7
+        duration: 1
+      - x: 8
+        y: 7
+        duration: 1
+      - x: 9
+        y: 7
+        duration: 1
+      - x: 10
+        y: 7
+        duration: 1
+      - x: 11
+        y: 7
+        duration: 1
+      - x: 12
+        y: 7
+        duration: 1
+      - x: 13
+        y: 7
+        duration: 1
+      - x: 14
+        y: 7
+        duration: 1
+      - x: 15
+        y: 7
+        duration: 15
+
+  # Obstacle 2: Crosses diagonal around (10,10) at time ~9-11
+  # Moves from bottom-left to top-right, sitting on the diagonal
+  - id: obs2
+    footprint:
+      kind: circle
+      radius: 1
+    waypoints:
+      - x: 10
+        y: 5
+        duration: 2
+      - x: 10
+        y: 6
+        duration: 2
+      - x: 10
+        y: 7
+        duration: 2
+      - x: 10
+        y: 8
+        duration: 2
+      - x: 10
+        y: 10
+        duration: 2
+      - x: 10
+        y: 11
+        duration: 2
+      - x: 10
+        y: 12
+        duration: 2
+      - x: 10
+        y: 13
+        duration: 2
+      - x: 10
+        y: 14
+        duration: 2
+      - x: 10
+        y: 15
+        duration: 8
+
+  # Obstacle 3: Camps on waypoint (13,13) for a while
+  # This will force robot to wait or go around
+  - id: obs3
+    footprint:
+      kind: circle
+      radius: 1
+    waypoints:
+      - x: 10
+        y: 13
+        duration: 0
+      - x: 10
+        y: 13
+        duration: 15
+      - x: 11
+        y: 13
+        duration: 3
+      - x: 12
+        y: 13
+        duration: 3
+      - x: 13
+        y: 13
+        duration: 3
+      - x: 14
+        y: 13
+        duration: 3
+      - x: 15
+        y: 13
+        duration: 3
+      - x: 16
+        y: 13
+        duration: 3
+      - x: 17
+        y: 13
+        duration: 3
+      - x: 18
+        y: 13
+        duration: 10

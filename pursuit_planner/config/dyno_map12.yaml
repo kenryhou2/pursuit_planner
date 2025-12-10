@@ -1,0 +1,76 @@
+# Dynamic obstacles for map12
+# This map has two horizontal walls with gaps (corridors) at columns 13-18
+# Wall 1 is at row 11, Wall 2 is at row 20
+# Robot starts at (2,28) bottom-left and needs to reach (28,2) top-right
+# The robot must pass through these corridor gaps twice
+#
+# The dynamic obstacles are timed to block the corridor when the robot arrives
+
+dynamic_obstacles:
+  # First corridor blocker - patrols the gap in wall 1 (row 11)
+  # Timed to be blocking when robot would naturally arrive (~15-20 timesteps)
+  - id: corridor1_blocker
+    footprint:
+      kind: box
+      width: 4
+      height: 3
+    waypoints:
+      - x: 15
+        y: 21
+        duration: 0
+      - x: 15
+        y: 21
+        duration: 15    # Wait at corridor, blocking when robot arrives
+      - x: 16
+        y: 21
+        duration: 2
+      - x: 17
+        y: 21
+        duration: 2
+      - x: 18
+        y: 21
+        duration: 2
+      - x: 19
+        y: 21
+        duration: 2
+      - x: 20
+        y: 21
+        duration: 2
+      - x: 21
+        y: 21
+        duration: 2
+      - x: 22
+        y: 21
+        duration: 50    # Move right, clearing the corridor
+      - x: 15
+        y: 21
+        duration: 10    # Return to block again
+      - x: 15
+        y: 21
+        duration: 10    # Move left
+      - x: 15
+        y: 21
+        duration: 10    # Return to center
+  # Roaming patrol in the middle area between walls
+  - id: Blocker
+    footprint:
+      kind: box
+      width: 6
+      height: 6
+    waypoints:
+      - x: 19
+        y: 6
+        duration: 90
+      - x: 20
+        y: 15
+        duration: 20    # Patrol right
+      - x: 20
+        y: 16
+        duration: 5     # Move down slightly
+      - x: 10
+        y: 16
+        duration: 20    # Patrol left
+      - x: 10
+        y: 15
+        duration: 5     # Return up
+

@@ -1,0 +1,66 @@
+dynamic_obstacles:
+  # Patrol obstacle in lower-left region (away from main path which goes upper-left to lower-middle)
+  - id: obs0
+    footprint:
+      kind: circle
+      radius: 15
+    waypoints:
+      - x: 100
+        y: 50
+        duration: 0
+      - x: 150
+        y: 50
+        duration: 100
+      - x: 100
+        y: 50
+        duration: 100
+
+  # Obstacle in far right area (robot starts right but heads left)
+  - id: obs1
+    footprint:
+      kind: box
+      width: 20
+      height: 20
+    waypoints:
+      - x: 450
+        y: 200
+        duration: 0
+      - x: 450
+        y: 250
+        duration: 80
+      - x: 450
+        y: 200
+        duration: 80
+
+  # Small obstacle in upper area
+  - id: obs2
+    footprint:
+      kind: circle
+      radius: 12
+    waypoints:
+      - x: 200
+        y: 50
+        duration: 0
+      - x: 250
+        y: 50
+        duration: 100
+      - x: 200
+        y: 50
+        duration: 100
+
+  # Small patrol in far lower-left
+  - id: obs3
+    footprint:
+      kind: box
+      width: 15
+      height: 15
+    waypoints:
+      - x: 80
+        y: 300
+        duration: 0
+      - x: 120
+        y: 300
+        duration: 80
+      - x: 80
+        y: 300
+        duration: 80

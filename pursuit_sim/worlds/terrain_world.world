@@ -1,18 +1,48 @@
 <?xml version="1.0" ?>
 <sdf version="1.6">
   <world name="terrain_world">
-
-
-    <gravity>0 0 -9.81</gravity>
+    <gravity>0 0 0</gravity>
     <physics type="ode">
       <max_step_size>0.001</max_step_size>
       <real_time_update_rate>1000.0</real_time_update_rate>
       <real_time_factor>1.0</real_time_factor>
+      <ode>
+        <solver>
+          <type>quick</type>
+          <iters>150</iters>
+          <sor>1.3</sor>
+        </solver>
+        <constraints>
+          <cfm>1e-5</cfm>
+          <erp>0.2</erp>
+        </constraints>
+      </ode>
     </physics>
+    <light type="directional" name="sun">
+      <pose>0 0 10 0 0 0</pose>
+
+      <!-- Direction the sun shines (normalized vector) -->
+      <direction>-0.5 -0.5 -1</direction>
+
+      <!-- Bright sunlight -->
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+
+      <!-- Enable shadows -->
+      <cast_shadows>true</cast_shadows>
+
+      <!-- Attenuation is ignored for directional lights, but Gazebo requires it -->
+      <attenuation>
+        <range>1000</range>
+        <constant>1</constant>
+        <linear>0</linear>
+        <quadratic>0</quadratic>
+      </attenuation>
+    </light>
 
     <!-- Point lights only: no sun -->
     <light type="point" name="point_light_center">
-      <pose>256.5 -256.5 15.0 0 0 0</pose>
+      <pose>256.5 -256.5 30.0 0 0 0</pose>
       <diffuse>1 1 1 1</diffuse>
       <specular>0.5 0.5 0.5 1</specular>
       <attenuation>
@@ -25,7 +55,7 @@
     </light>
 
     <light type="point" name="point_light_north">
-      <pose>256.5 0 20.0 0 0 0</pose>
+      <pose>256.5 0 40.0 0 0 0</pose>
       <diffuse>0.9 0.9 1 1</diffuse>
       <specular>0.4 0.4 0.6 1</specular>
       <attenuation>
@@ -38,7 +68,7 @@
     </light>
 
     <light type="point" name="point_light_south">
-      <pose>256.5 -513.0 20.0 0 0 0</pose>
+      <pose>256.5 -513.0 40.0 0 0 0</pose>
       <diffuse>1 0.95 0.9 1</diffuse>
       <specular>0.6 0.5 0.4 1</specular>
       <attenuation>
@@ -59,17 +89,35 @@
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>513.0 513.0 5.0</size>
+              <size>513.0 513.0 10.0</size>
               <pos>256.5 -256.5 0</pos>
             </heightmap>
           </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <!-- Tune these to match what you want -->
+                <mu>10.0</mu>
+                <mu2>10.0</mu2>
+              </ode>
+            </friction>
+            <contact>
+              <ode>
+                <!-- Reasonable terrain contact values -->
+                <kp>2e5</kp>
+                <kd>50.0</kd>
+                <min_depth>0.001</min_depth>
+                <max_vel>0.1</max_vel>
+              </ode>
+            </contact>
+          </surface>
         </collision>
 
         <visual name="terrain_visual">
           <geometry>
             <heightmap>
               <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>513.0 513.0 5.0</size>
+              <size>513.0 513.0 10.0</size>
               <pos>256.5 -256.5 0</pos>
 
               <!-- Base ground texture -->
@@ -94,7 +142,7 @@
 
               <!-- Walls/buildings: anything above ~20% of max_height -->
               <blend>
-                <min_height>1.0</min_height>
+                <min_height>2.0</min_height>
                 <fade_dist>0.05</fade_dist>
               </blend>
             </heightmap>

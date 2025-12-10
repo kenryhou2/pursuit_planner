@@ -1,0 +1,63 @@
+<launch>
+  <arg name="map_file"
+       default="$(find pursuit_planner)/maps/map3.txt" />
+  <arg name="heightmap_png"
+       default="$(find pursuit_sim)/worlds/heightmap_map3.png" />
+  <arg name="world_path"
+       default="$(find pursuit_sim)/worlds/terrain_world.world" />
+
+
+
+  !-- ========================= -->
+  <!-- 1) Generate heightmap    -->
+  <!-- ========================= -->
+
+  <node name="generate_heightmap"
+        pkg="pursuit_sim"
+        type="generate_heightmap.py"
+        output="screen"
+        respawn="false"
+        clear_params="false"
+        args="$(arg map_file)
+              --heightmap_png=$(arg heightmap_png)
+              --world_path=$(arg world_path)
+              --max_height=10.0" />
+
+  <!-- ========================= -->
+  <!-- 2) Start Gazebo server   -->
+  <!-- ========================= -->
+
+  <node name="gazebo"
+        pkg="gazebo_ros"
+        type="gzserver"
+        args="-e ode $(arg world_path)"
+        output="screen" />
+
+  <node name="gazebo_gui"
+        pkg="gazebo_ros"
+        type="gzclient"
+        output="screen" />
+
+  <node pkg="pursuit_sim"
+        type="dynamic_trajs_animator.py"
+        name="dynamic_trajectory_animator"
+        output="screen">
+
+    <!-- Adjust path if you want another map -->
+    <param name="trajectory_file"
+           value="$(find pursuit_sim)/map_trajectories/map3/dynamic_trajectories.txt"/>
+
+    <param name="meters_per_cell" value="1.0"/>
+
+    <param name="z_height" value="0.0"/>
+    <param name="obstacle_height" value="5.0"/>
+    <param name="loop" value="false"/>
+
+    <!-- Repeat animation -->
+    <param name="loop" value="true"/>
+    <param name="interp_rate" value="40.0"/>
+    <param name="replay_speed" value="10.0"/> 
+
+  </node>
+
+</launch>

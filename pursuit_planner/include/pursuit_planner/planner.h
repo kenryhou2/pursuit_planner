@@ -41,15 +41,15 @@ struct CompactDynamicObstacles {
                 int dx = x - obs.x;
                 int dy = y - obs.y;
                 double dist_sq = dx*dx + dy*dy;
-                double R_sq = obs.footprint.radius * obs.footprint.radius;
+                double R_sq = obs.footprint.radius * obs.footprint.radius + 1;
                 
                 if (dist_sq <= R_sq) {
                     return true;
                 }
             }
             else if (obs.footprint.kind == "box") {
-                int half_w = obs.footprint.width / 2;
-                int half_h = obs.footprint.height / 2;
+                int half_w = obs.footprint.width / 2 + 1;
+                int half_h = obs.footprint.height / 2 + 1;
                 if (std::abs(x - obs.x) <= half_w && std::abs(y - obs.y) <= half_h) {
                     return true;
                 }

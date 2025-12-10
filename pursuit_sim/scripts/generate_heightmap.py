@@ -242,14 +242,44 @@ def write_world_with_inlined_heightmap(world_path: str,
         <?xml version="1.0" ?>
         <sdf version="1.6">
           <world name="terrain_world">
-
-            
-            <gravity>0 0 -9.81</gravity>
+            <gravity>0 0 0</gravity>
             <physics type="ode">
               <max_step_size>0.001</max_step_size>
               <real_time_update_rate>1000.0</real_time_update_rate>
               <real_time_factor>1.0</real_time_factor>
+              <ode>
+                <solver>
+                  <type>quick</type>
+                  <iters>150</iters>
+                  <sor>1.3</sor>
+                </solver>
+                <constraints>
+                  <cfm>1e-5</cfm>
+                  <erp>0.2</erp>
+                </constraints>
+              </ode>
             </physics>
+            <light type="directional" name="sun">
+              <pose>0 0 10 0 0 0</pose>
+
+              <!-- Direction the sun shines (normalized vector) -->
+              <direction>-0.5 -0.5 -1</direction>
+
+              <!-- Bright sunlight -->
+              <diffuse>1 1 1 1</diffuse>
+              <specular>0.2 0.2 0.2 1</specular>
+
+              <!-- Enable shadows -->
+              <cast_shadows>true</cast_shadows>
+
+              <!-- Attenuation is ignored for directional lights, but Gazebo requires it -->
+              <attenuation>
+                <range>1000</range>
+                <constant>1</constant>
+                <linear>0</linear>
+                <quadratic>0</quadratic>
+              </attenuation>
+            </light>
 
             <!-- Point lights only: no sun -->
             <light type="point" name="point_light_center">
@@ -304,6 +334,24 @@ def write_world_with_inlined_heightmap(world_path: str,
                       <pos>{center_x} {center_y} 0</pos>
                     </heightmap>
                   </geometry>
+                  <surface>
+                    <friction>
+                      <ode>
+                        <!-- Tune these to match what you want -->
+                        <mu>10.0</mu>
+                        <mu2>10.0</mu2>
+                      </ode>
+                    </friction>
+                    <contact>
+                      <ode>
+                        <!-- Reasonable terrain contact values -->
+                        <kp>2e5</kp>
+                        <kd>50.0</kd>
+                        <min_depth>0.001</min_depth>
+                        <max_vel>0.1</max_vel>
+                      </ode>
+                    </contact>
+                  </surface>
                 </collision>
 
                 <visual name="terrain_visual">

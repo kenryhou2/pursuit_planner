@@ -1,11 +1,8 @@
 #include <ros/ros.h>
 #include <ros/package.h>
 
-#include <nav_msgs/OccupancyGrid.h>   // not strictly needed anymore, can remove
 #include <geometry_msgs/Pose2D.h>
-#include <std_msgs/Int32MultiArray.h>
-#include <std_msgs/String.h>
-#include <std_msgs/Bool.h>
+#include <geometry_msgs/PoseArray.h>
 
 #include <yaml-cpp/yaml.h>
 
@@ -16,6 +13,7 @@
 #include <sstream>
 #include <algorithm>
 #include <fstream>
+#include <chrono>
 
 #include "pursuit_planner/planner.h"
 
@@ -35,7 +33,7 @@ struct Waypoint {
     int duration;
 };
 
-// Note: Footprint struct is defined in planner.h
+// Footprint struct is defined in planner.h
 
 struct DynamicObstacle {
     std::string id;
@@ -46,6 +44,14 @@ struct DynamicObstacle {
 static std::vector<DynamicObstacle> loadDynamicObstacles(const std::string& yaml_path)
 {
     std::vector<DynamicObstacle> obstacles;
+
+    // Check if file exists; if not, just return empty
+    std::ifstream test_file(yaml_path);
+    if (!test_file.good()) {
+        ROS_WARN_STREAM("No dynamic obstacles file found at: " << yaml_path);
+        return obstacles;
+    }
+    test_file.close();
 
     YAML::Node config = YAML::LoadFile(yaml_path);
     if (!config["dynamic_obstacles"]) {
@@ -135,7 +141,7 @@ simulateObstacle(const DynamicObstacle& ob, int max_t)
     return traj;
 }
 
-// 3D occupancy grid: occ[t][y][x], with 1-based x,y indices
+// 3D occupancy grid (unused by planner now, but kept for completeness)
 static std::vector<std::vector<std::vector<bool>>>
 buildDynamicOccupancyGrid(
     const std::vector<DynamicObstacle>& obstacles,
@@ -199,6 +205,10 @@ buildDynamicOccupancyGrid(
 
 using ObstacleTraj = std::vector<std::vector<std::pair<int,int>>>;
 
+// ============================================================================
+// PlannerNode: ROS wrapper around runtest.cpp behavior
+// ============================================================================
+
 class PlannerNode {
 public:
     PlannerNode(ros::NodeHandle& nh)
@@ -213,19 +223,26 @@ public:
           robotposeY_(0),
           curr_time_(0),
           target_steps_(0),
+          goalX_(0),
+          goalY_(0),
           numofmoves_(0),
           caught_(false),
           pathcost_(0),
           finished_(false)
     {
-        // Get map file + dyno yaml from params
-        nh_.param<std::string>("map_file", map_file_path_, std::string(""));
-        nh_.param<std::string>("dyno_yaml", dyno_yaml_path_, std::string(""));
+        // Get map file + dyno yaml from params (with defaults)
+        std::string default_map =
+            ros::package::getPath("pursuit_planner") + "/maps/map11.txt";
+        std::string default_yaml =
+            ros::package::getPath("pursuit_planner") + "/config/dyno_map11.yaml";
 
-        //Publisher for robot pose and target 
-        robot_pub_ = nh_.advertise<geometry_msgs::Pose2D>("robot_pose", 1);
+        nh_.param<std::string>("map_file",  map_file_path_,  default_map);
+        nh_.param<std::string>("dyno_yaml", dyno_yaml_path_, default_yaml);
 
-        target_pub_ = nh_.advertise<geometry_msgs::Pose2D>("target_pose", 1);
+        // Latched publishers for final trajectories
+        robot_path_pub_  = nh_.advertise<geometry_msgs::PoseArray>("robot_path",  1, true);
+        target_path_pub_ = nh_.advertise<geometry_msgs::PoseArray>("target_path", 1, true);
+        // obstacle_traj_pub_map_ will be filled after we know obstacle IDs
 
         if (!loadProblemFromFile()) {
             ROS_FATAL("PlannerNode: failed to load problem from file.");
@@ -236,50 +253,36 @@ public:
         // allocate action_ptr once
         action_ptr_ = new int[2];
 
-        // open output trajectory file (same as runtest.cpp)
-        std::string outputDir = OUTPUT_DIR;
-        std::string outputFilePath = outputDir + "/robot_trajectory.txt";
-        // output_file_.open(outputFilePath);
-        // if (!output_file_.is_open()) {
-        //     ROS_ERROR_STREAM("Failed to open output file: " << outputFilePath);
-        //     finished_ = true;
-        //     return;
-        // }
+        // Seed robot_path_ with initial pose
+        geometry_msgs::Pose2D start_pose;
+        start_pose.x = robotposeX_;
+        start_pose.y = robotposeY_;
+        start_pose.theta = 0.0;
+        robot_path_.push_back(start_pose);
 
-        // write initial state
-        // output_file_ << curr_time_ << "," << robotposeX_ << "," << robotposeY_ << std::endl;
-
-        ROS_INFO("PlannerNode initialized from file. Ready to run control loop.");
+        ROS_INFO("PlannerNode initialized from file. Ready to run planner.");
     }
 
     ~PlannerNode() {
         if (target_traj_) delete[] target_traj_;
         if (map_) delete[] map_;
         if (action_ptr_) delete[] action_ptr_;
-        // if (output_file_.is_open()) output_file_.close();
     }
 
     bool isFinished() const { return finished_; }
 
-    double computeRobotHeading(int oldX, int oldY, int newX, int newY)
-    {
-        int dx = newX - oldX;
-        int dy = newY - oldY;
-        return std::atan2(dy, dx);   // radians
-    }
-
-
+    // One iteration of the planner loop (mirrors runtest.cpp while-body)
     void spinOnce()
     {
         if (finished_) return;
 
-        // === This is one iteration of the original while(true) body ===
-
         auto start = std::chrono::high_resolution_clock::now();
 
-        int targetposeX = target_traj_[curr_time_];
-        int targetposeY = target_traj_[curr_time_ + target_steps_];
+        // Static goal (final target waypoint)
+        int targetposeX = goalX_;
+        int targetposeY = goalY_;
 
+        // Call planner with static goal and dynamic obstacles
         planner(map_,
                 compactObs_,
                 collision_thresh_,
@@ -300,7 +303,7 @@ public:
         ROS_INFO_STREAM("Planner selected next waypoint: ("
                         << newrobotposeX << "," << newrobotposeY << ")");
 
-        // --- same checks as runtest.cpp ---
+        // Validity checks (same as runtest.cpp)
         if (newrobotposeX < 1 || newrobotposeX > x_size_ ||
             newrobotposeY < 1 || newrobotposeY > y_size_)
         {
@@ -325,7 +328,6 @@ public:
 
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-
         int movetime = std::max(1, (int)std::ceil(duration));
 
         if (newrobotposeX == robotposeX_ && newrobotposeY == robotposeY_) {
@@ -334,103 +336,139 @@ public:
 
         if (curr_time_ + movetime >= target_steps_) {
             finished_ = true;
-            ROS_INFO("Reached end of target_steps_");
+            ROS_INFO("Reached end of time horizon (target_steps_)");
             printResult();
             return;
         }
 
-        curr_time_ = curr_time_ + movetime;
+        // Dynamic obstacle collision check at arrival time
+        int arrival_time = curr_time_ + movetime;
+        if (compactObs_.isOccupied(newrobotposeX, newrobotposeY, arrival_time)) {
+            ROS_ERROR_STREAM("ERROR: Robot will collide with dynamic obstacle at t="
+                             << arrival_time << " pos=("
+                             << newrobotposeX << "," << newrobotposeY << ")");
+            finished_ = true;
+            return;
+        }
+
+        curr_time_  = arrival_time;
         numofmoves_ = numofmoves_ + 1;
-        pathcost_ = pathcost_ + movetime * map_[(robotposeY_-1)*x_size_ + robotposeX_-1];
+        pathcost_   = pathcost_ + movetime * map_[(robotposeY_-1)*x_size_ + robotposeX_-1];
 
         int prevRobotX = robotposeX_;
         int prevRobotY = robotposeY_;
-        robotposeX_ = newrobotposeX;
-        robotposeY_ = newrobotposeY;
+        robotposeX_    = newrobotposeX;
+        robotposeY_    = newrobotposeY;
 
-        // Publish robot pose
-        geometry_msgs::Pose2D robot_msg;
-        robot_msg.x = newrobotposeX;
-        robot_msg.y = newrobotposeY;
-        robot_msg.theta = computeRobotHeading(prevRobotX, prevRobotY, newrobotposeX, newrobotposeY);
-        robot_pub_.publish(robot_msg);
+        // Record robot path waypoint (with heading)
+        geometry_msgs::Pose2D robot_wp;
+        robot_wp.x = robotposeX_;
+        robot_wp.y = robotposeY_;
+        robot_wp.theta = computeRobotHeading(prevRobotX, prevRobotY,
+                                             robotposeX_, robotposeY_);
+        robot_path_.push_back(robot_wp);
 
-        // Publish target pose
-        geometry_msgs::Pose2D target_msg;
-        target_msg.x = targetposeX;
-        target_msg.y = targetposeY;
-
-        // If you know next target waypoint:
-        if (curr_time_ + 1 < target_steps_) {
-            int nextX = target_traj_[curr_time_ + 1];
-            int nextY = target_traj_[curr_time_ + 1 + target_steps_];
-            target_msg.theta = std::atan2(nextY - targetposeY, nextX - targetposeX);
-        } else {
-            target_msg.theta = 0.0;
-        }
-
-        target_pub_.publish(target_msg);
-
-        // --- Publish dynamic obstacle poses at current curr_time_ ---
-        if (!obstacles_.empty() &&
-            !obstacle_trajs_.empty() &&
-            curr_time_ >= 0 &&
-            curr_time_ < target_steps_)
-        {
-            for (size_t i = 0; i < obstacles_.size(); ++i) {
-                const auto& ob   = obstacles_[i];
-                const auto& traj = obstacle_trajs_[i];
-
-                if ((size_t)curr_time_ >= traj.size()) continue;
-                const auto& cells = traj[curr_time_];
-                if (cells.empty()) continue;
-
-                int ox = cells[0].first;
-                int oy = cells[0].second;
-
-                geometry_msgs::Pose2D msg;
-                msg.x = ox;
-                msg.y = oy;
-
-                // simple heading estimate based on next time step
-                if ((size_t)(curr_time_ + 1) < traj.size() &&
-                    !traj[curr_time_ + 1].empty())
-                {
-                    int nx = traj[curr_time_ + 1][0].first;
-                    int ny = traj[curr_time_ + 1][0].second;
-                    msg.theta = std::atan2(ny - oy, nx - ox);
-                } else {
-                    msg.theta = 0.0;
-                }
-
-                auto it = obstacle_pub_map_.find(ob.id);
-                if (it != obstacle_pub_map_.end()) {
-                    it->second.publish(msg);
-                }
-            }
-        }
-
-        // log to file
-        // output_file_ << curr_time_ << "," << robotposeX_ << "," << robotposeY_ << std::endl;
-
-        // check if target is caught
+        // Goal check w.r.t static goal
         float thresh = 0.5f;
-        targetposeX = target_traj_[curr_time_];
-        targetposeY = target_traj_[curr_time_ + target_steps_];
-        if (std::abs(robotposeX_ - targetposeX) <= thresh &&
-            std::abs(robotposeY_ - targetposeY) <= thresh)
+        if (std::abs(robotposeX_ - goalX_) <= thresh &&
+            std::abs(robotposeY_ - goalY_) <= thresh)
         {
-            caught_ = true;
+            caught_   = true;
             finished_ = true;
             printResult();
         }
     }
 
+    // Publish all trajectories once, as latched PoseArray topics
+    void publishTrajectoriesOnce()
+    {
+        // 1) Robot path
+        geometry_msgs::PoseArray robot_arr;
+        robot_arr.header.stamp = ros::Time::now();
+        robot_arr.header.frame_id = "map"; // adjust if needed
+
+        for (const auto& p2d : robot_path_) {
+            geometry_msgs::Pose p;
+            p.position.x = p2d.x;
+            p.position.y = p2d.y;
+            p.position.z = 0.0;
+
+            // Simple yaw-only quaternion from theta
+            double yaw  = p2d.theta;
+            double half = 0.5 * yaw;
+            double cz   = std::cos(half);
+            double sz   = std::sin(half);
+            p.orientation.x = 0.0;
+            p.orientation.y = 0.0;
+            p.orientation.z = sz;
+            p.orientation.w = cz;
+
+            robot_arr.poses.push_back(p);
+        }
+
+        robot_path_pub_.publish(robot_arr);
+        ROS_INFO_STREAM("Published robot_path with " << robot_arr.poses.size() << " waypoints");
+
+        // 2) Target path (static list from map file)
+        geometry_msgs::PoseArray target_arr;
+        target_arr.header = robot_arr.header;
+        for (const auto& p2d : target_path_) {
+            geometry_msgs::Pose p;
+            p.position.x = p2d.x;
+            p.position.y = p2d.y;
+            p.position.z = 0.0;
+            p.orientation.x = 0.0;
+            p.orientation.y = 0.0;
+            p.orientation.z = 0.0;
+            p.orientation.w = 1.0;
+            target_arr.poses.push_back(p);
+        }
+
+        target_path_pub_.publish(target_arr);
+        ROS_INFO_STREAM("Published target_path with " << target_arr.poses.size() << " waypoints");
+
+        // 3) Dynamic obstacle trajectories
+        for (size_t i = 0; i < obstacles_.size(); ++i) {
+            const auto& ob   = obstacles_[i];
+            const auto& traj = obstacle_trajs_[i];
+
+            geometry_msgs::PoseArray arr;
+            arr.header = robot_arr.header;
+
+            // One center pose per time-step
+            for (size_t t = 0; t < traj.size(); ++t) {
+                if (traj[t].empty()) continue;
+                int ox = traj[t][0].first;
+                int oy = traj[t][0].second;
+
+                geometry_msgs::Pose p;
+                p.position.x = ox;
+                p.position.y = oy;
+                p.position.z = 0.0;
+                p.orientation.x = 0.0;
+                p.orientation.y = 0.0;
+                p.orientation.z = 0.0;
+                p.orientation.w = 1.0;
+
+                arr.poses.push_back(p);
+            }
+
+            auto it = obstacle_traj_pub_map_.find(ob.id);
+            if (it != obstacle_traj_pub_map_.end()) {
+                it->second.publish(arr);
+                ROS_INFO_STREAM("Published trajectory for obstacle " << ob.id
+                                << " with " << arr.poses.size() << " waypoints");
+            }
+        }
+    }
+
 private:
     ros::NodeHandle nh_;
-    ros::Publisher  robot_pub_;
-    ros::Publisher  target_pub_;
-    std::map<std::string, ros::Publisher> obstacle_pub_map_;
+
+    // Trajectory publishers (latched)
+    ros::Publisher  robot_path_pub_;
+    ros::Publisher  target_path_pub_;
+    std::map<std::string, ros::Publisher> obstacle_traj_pub_map_;
 
     // dynamic obstacles
     std::vector<DynamicObstacle> obstacles_;
@@ -439,7 +477,6 @@ private:
     // problem data
     int* map_;
     int* target_traj_;
-    std::vector<std::vector<std::vector<bool>>> occ3D_;
     CompactDynamicObstacles compactObs_;
 
     int x_size_, y_size_;
@@ -447,6 +484,7 @@ private:
     int robotposeX_, robotposeY_;
     int curr_time_;
     int target_steps_;
+    int goalX_, goalY_;
     int* action_ptr_;
 
     int numofmoves_;
@@ -457,7 +495,19 @@ private:
     std::string map_file_path_;
     std::string dyno_yaml_path_;
 
-    // std::ofstream output_file_;
+    // Paths stored as Pose2D for convenience
+    std::vector<geometry_msgs::Pose2D> robot_path_;
+    std::vector<geometry_msgs::Pose2D> target_path_;
+
+    double computeRobotHeading(int oldX, int oldY, int newX, int newY)
+    {
+        int dx = newX - oldX;
+        int dy = newY - oldY;
+        if (dx == 0 && dy == 0) {
+            return 0.0;
+        }
+        return std::atan2(dy, dx);   // radians
+    }
 
     // Convert from obstacle data structures to CompactDynamicObstacles
     CompactDynamicObstacles convertToCompactObstacles(
@@ -468,49 +518,38 @@ private:
         CompactDynamicObstacles compact;
         compact.max_time = max_t;
         compact.timesteps.resize(max_t + 1);
-        
+
         for (size_t obs_idx = 0; obs_idx < obstacles.size(); ++obs_idx) {
-            const auto& ob = obstacles[obs_idx];
+            const auto& ob   = obstacles[obs_idx];
             const auto& traj = obstacle_trajs[obs_idx];
-            
+
             for (int t = 0; t <= max_t; ++t) {
                 if (t >= (int)traj.size() || traj[t].empty()) continue;
-                
+
                 ObstacleState state;
                 state.x = traj[t][0].first;
                 state.y = traj[t][0].second;
-                state.footprint.kind = ob.footprint.kind;
+                state.footprint.kind   = ob.footprint.kind;
                 state.footprint.radius = ob.footprint.radius;
-                state.footprint.width = ob.footprint.width;
+                state.footprint.width  = ob.footprint.width;
                 state.footprint.height = ob.footprint.height;
-                
+
                 compact.timesteps[t].push_back(state);
             }
         }
-        
+
         return compact;
     }
 
     bool loadProblemFromFile()
     {
-        std::string default_map =
-            ros::package::getPath("pursuit_planner") + "/maps/map4.txt";
-        std::string default_yaml =
-            ros::package::getPath("pursuit_planner") + "/config/dyno_map4.yaml";
-
-            // ---- Load parameters from the private namespace "~" ----
-        nh_.param<std::string>("map_file",  map_file_path_,  default_map);
-        nh_.param<std::string>("dyno_yaml", dyno_yaml_path_, default_yaml);
-
         ROS_INFO_STREAM("Reading problem definition from: " << map_file_path_);
 
         std::ifstream myfile(map_file_path_);
         if (!myfile.is_open()) {
             ROS_ERROR_STREAM("Failed to open the file: " << map_file_path_);
             return false;
-        }        
-
-        
+        }
 
         char letter;
         std::string line;
@@ -542,7 +581,7 @@ private:
         myfile >> robotposeX_ >> letter >> robotposeY_;
         ROS_INFO_STREAM("robot pose: " << robotposeX_ << "x" << robotposeY_);
 
-        // read trajectory
+        // read trajectory (T ... M)
         std::vector<std::vector<int>> traj;
         std::getline(myfile, line); // consume end of line after R line
 
@@ -558,47 +597,59 @@ private:
         }
 
         target_steps_ = traj.size();
-        target_traj_ = new int[2 * target_steps_];
+        target_traj_  = new int[2 * target_steps_];
         for (size_t i = 0; i < target_steps_; ++i) {
-            target_traj_[i]             = traj[i][0];
+            target_traj_[i]                 = traj[i][0];
             target_traj_[i + target_steps_] = traj[i][1];
         }
         ROS_INFO_STREAM("target_steps: " << target_steps_);
 
-        // load dynamic obstacles + build occ3D
+        // Static goal from final target position (like runtest.cpp)
+        goalX_ = target_traj_[target_steps_ - 1];
+        goalY_ = target_traj_[2 * target_steps_ - 1];
+        ROS_INFO_STREAM("Static goal: (" << goalX_ << "," << goalY_ << ")");
+
+        // Build target_path_ as static list
+        target_path_.clear();
+        for (int k = 0; k < target_steps_; ++k) {
+            geometry_msgs::Pose2D p;
+            p.x = target_traj_[k];
+            p.y = target_traj_[k + target_steps_];
+            p.theta = 0.0;
+            target_path_.push_back(p);
+        }
+
+        // load dynamic obstacles + compact representation
         auto obstacles = loadDynamicObstacles(dyno_yaml_path_);
         ROS_INFO_STREAM("Loaded " << obstacles.size() << " dynamic obstacles from " << dyno_yaml_path_);
         obstacles_ = obstacles;
-        occ3D_ = buildDynamicOccupancyGrid(obstacles_, x_size_, y_size_, target_steps_);
 
-        // simulate and store obstacle trajectories
         obstacle_trajs_.clear();
         for (const auto& ob : obstacles_) {
             obstacle_trajs_.push_back(simulateObstacle(ob, target_steps_));
         }
-        
-        // Convert to compact format for planner
+
         compactObs_ = convertToCompactObstacles(obstacles_, obstacle_trajs_, target_steps_);
-        
-        obstacle_pub_map_.clear();
-        //Create publishers for dynamic obstacles
+
+        // Create latched publishers for dynamic obstacle trajectories
+        obstacle_traj_pub_map_.clear();
         for (const auto& ob : obstacles_) {
-            std::string topic = "/dynamic_obstacles/" + ob.id + "/pose";
-            obstacle_pub_map_[ob.id] =
-                nh_.advertise<geometry_msgs::Pose2D>(topic, 1);
-            ROS_INFO_STREAM("Advertising dynamic obstacle topic: " << topic);
+            std::string topic = "dynamic_obstacles/" + ob.id + "/trajectory";
+            obstacle_traj_pub_map_[ob.id] =
+                nh_.advertise<geometry_msgs::PoseArray>(topic, 1, true);
+            ROS_INFO_STREAM("Advertising dynamic obstacle trajectory topic: " << topic);
         }
 
         // read map (M section just finished)
         map_ = new int[x_size_ * y_size_];
-        for (size_t i = 0; i < x_size_; i++) {
+        for (size_t i = 0; i < (size_t)x_size_; i++) {
             std::getline(myfile, line);
             std::stringstream ss(line);
-            for (size_t j = 0; j < y_size_; j++) {
+            for (size_t j = 0; j < (size_t)y_size_; j++) {
                 double value;
                 ss >> value;
                 map_[j * x_size_ + i] = (int)value;
-                if (j != y_size_ - 1) ss.ignore();
+                if (j != (size_t)y_size_ - 1) ss.ignore();
             }
         }
 
@@ -610,13 +661,14 @@ private:
     void printResult()
     {
         ROS_INFO_STREAM("\nRESULT");
-        ROS_INFO_STREAM("target caught = " << (caught_ ? "true" : "false"));
+        ROS_INFO_STREAM("goal reached = " << (caught_ ? "true" : "false"));
         ROS_INFO_STREAM("time taken (s) = " << curr_time_);
         ROS_INFO_STREAM("moves made = " << numofmoves_);
         ROS_INFO_STREAM("path cost = " << pathcost_);
     }
 };
 
+// ============================================================================
 
 int main(int argc, char** argv)
 {
@@ -624,12 +676,17 @@ int main(int argc, char** argv)
     ros::NodeHandle nh("~");
 
     PlannerNode node(nh);
+    ros::Rate rate(1);   // IMPORTANT: slow this down
 
-    ros::Rate rate(100.0);  // match the original "1 Hz-ish" style
     while (ros::ok() && !node.isFinished()) {
         ros::spinOnce();
-        node.spinOnce();
-        rate.sleep();
+        node.spinOnce();   // one planner step
+        rate.sleep();      // gives memory time to release
+    }
+    if (ros::ok()) {
+        node.publishTrajectoriesOnce();
+        ROS_INFO("Trajectories published. Node will keep spinning so latched topics remain available.");
+        ros::spin();
     }
 
     return 0;

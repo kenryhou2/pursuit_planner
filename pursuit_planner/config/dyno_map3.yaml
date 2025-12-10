@@ -1,37 +1,69 @@
 dynamic_obstacles:
+  # Large sweeping obstacle across middle region
   - id: obs0
     footprint:
       kind: circle
-      radius: 10
+      radius: 25
     waypoints:
-      - x: 10
-        y: 5
+      - x: 100
+        y: 150
         duration: 0
-      - x: 200
-        y: 5
-        duration: 100
-      - x: 200
-        y: 300
-        duration: 100
-      - x: 20
-        y: 10
+      - x: 280
+        y: 180
+        duration: 140
+      - x: 100
+        y: 220
+        duration: 140
+      - x: 100
+        y: 150
         duration: 100
 
+  # Vertical patrol obstacle
   - id: obs1
     footprint:
-      kind: circle
-      radius: 10
+      kind: box
+      width: 32
+      height: 32
     waypoints:
-      - x: 30
-        y: 14
+      - x: 190
+        y: 100
         duration: 0
-      - x: 200
-        y: 160
+      - x: 190
+        y: 270
+        duration: 150
+      - x: 190
+        y: 100
+        duration: 150
+
+  # Diagonal moving obstacle
+  - id: obs2
+    footprint:
+      kind: circle
+      radius: 18
+    waypoints:
+      - x: 150
+        y: 120
+        duration: 0
+      - x: 270
+        y: 240
         duration: 100
-      - x: 400
-        y: 160
-        duration: 100
-      - x: 10
-        y: 16
+      - x: 150
+        y: 120
         duration: 100
 
+  # Additional complexity in upper region
+  - id: obs3
+    footprint:
+      kind: box
+      width: 28
+      height: 28
+    waypoints:
+      - x: 240
+        y: 220
+        duration: 0
+      - x: 320
+        y: 290
+        duration: 95
+      - x: 240
+        y: 220
+        duration: 95

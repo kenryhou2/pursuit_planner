@@ -11,8 +11,8 @@
        default="$(find pursuit_sim)/worlds/terrain_world.world" />
 
   <!-- Eigenbot pose in the world params-->
-<arg name="eigenbot_x" default="1.0"/>
-<arg name="eigenbot_y" default="-1.0"/>
+<arg name="eigenbot_x" default="10.0"/>
+<arg name="eigenbot_y" default="-10.0"/>
 <arg name="eigenbot_z" default="0.3"/>
 <arg name="eigenbot_roll" default="1.57"/>
 <arg name="eigenbot_pitch" default="-1.57"/>
@@ -155,10 +155,10 @@
         output="screen" />
 
   <!-- 7) Low-level legged controller -->
-  <!-- <node name="eigenbot_legged_controller"
+  <node name="eigenbot_legged_controller"
         pkg="eigenbot_gazebo"
         type="legged_joint_controller.py"
-        output="screen" /> -->
+        output="screen" />
 
   <!-- <node name="eigenbot_legged_effort_controller"
         pkg="eigenbot_gazebo"
