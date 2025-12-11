@@ -8,6 +8,11 @@ import textwrap
 # =========================
 # Helpers
 # =========================
+try:
+    import rospy
+    ROS_AVAILABLE = True
+except ImportError:
+    ROS_AVAILABLE = False
 
 def parse_mapfile(filename):
     """
@@ -464,6 +469,47 @@ def main(argv=None):
 
     world_size_x = img_width  * args.meters_per_cell
     world_size_y = img_height * args.meters_per_cell
+
+    # ---------------------------------------------------------
+    # Publish map size + sensor radius + TARGET POSITION
+    # ---------------------------------------------------------
+    if ROS_AVAILABLE:
+        try:
+            # Just try to set params; if no master is running,
+            # this will throw and we’ll fall into the except.
+            rospy.set_param("/terrain/map_width",  world_size_x)
+            rospy.set_param("/terrain/map_height", world_size_y)
+
+            map_radius =  world_size_x/20.0
+            rospy.set_param("/terrain/sensor_radius", map_radius)
+
+            print(f"[ROS PARAM] /terrain/map_width  = {world_size_x}")
+            print(f"[ROS PARAM] /terrain/map_height = {world_size_y}")
+            print(f"[ROS PARAM] /terrain/sensor_radius = {map_radius}")
+
+            # ------------------------------
+            # TARGET POSITION (FINAL WAYPOINT)
+            # ------------------------------
+            if len(target_traj) > 0:
+                tgt = target_traj[-1]   # FINAL target point in grid coords
+                gx_t, gy_t = tgt["x"], tgt["y"]
+
+                x_world_t = (gx_t + 0.5) * args.meters_per_cell
+                y_world_t = -(gy_t + 0.5) * args.meters_per_cell
+
+                rospy.set_param("/terrain/target_x", x_world_t)
+                rospy.set_param("/terrain/target_y", y_world_t)
+
+                print(f"[ROS PARAM] /terrain/target_x = {x_world_t}")
+                print(f"[ROS PARAM] /terrain/target_y = {y_world_t}")
+            else:
+                print("[ROS PARAM] No target trajectory found — skipping target param.")
+
+        except Exception as e:
+            print(f"[ROS PARAM] ROS master not available, skipping params: {e}")
+
+
+
 
     # Mapping info: planner (gx, gy) -> world (x, y) with top-left origin and y-down in planner
     print("\n[mapping] Planner grid origin (0,0) is TOP-LEFT of ORIGINAL map.")

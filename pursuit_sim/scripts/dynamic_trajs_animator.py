@@ -51,6 +51,36 @@ class DynamicTrajectoryReplay(object):
         # Sphere radius in *world meters* (1m diameter)
         self.robot_radius = rospy.get_param("~robot_radius", 0.5)
 
+        # Sensor shell visualization (constant-range "bubble")
+        self.sensor_shell_enabled = rospy.get_param("~sensor_shell_enabled", True)
+        self.sensor_shell_alpha   = rospy.get_param("~sensor_shell_alpha", 0.2)
+        self.sensor_shell_name    = rospy.get_param("~sensor_shell_model_name", "sensor_shell")
+
+        # Load sensor radius from global map params
+        default_radius = 10.0  # fallback if no param exists
+        self.sensor_shell_radius = rospy.get_param("/terrain/sensor_radius", default_radius)
+
+        rospy.loginfo("Sensor shell radius set to %.3f m (from /terrain/sensor_radius)", 
+                    self.sensor_shell_radius)
+
+        # Target (goal) star visualization
+        self.target_enabled = rospy.get_param("~target_enabled", True)
+        self.target_name    = rospy.get_param("~target_model_name", "target_star")
+        self.target_z       = rospy.get_param("~target_z", 0.5)
+        self.target_scale   = rospy.get_param("~target_scale", 1.0)
+
+        # Read target params published by generate_heightmap.py
+        self.target_x = rospy.get_param("/terrain/target_x", None)
+        self.target_y = rospy.get_param("/terrain/target_y", None)
+
+        if self.target_x is not None and self.target_y is not None:
+            rospy.loginfo("Target star location loaded: (%.3f, %.3f)",
+                        self.target_x, self.target_y)
+        else:
+            rospy.logwarn("Target position params not found. Star will not spawn.")
+
+
+
         # Interpolation update rate (Hz)
         self.interp_rate = rospy.get_param("~interp_rate", 30.0)
 
@@ -231,19 +261,11 @@ class DynamicTrajectoryReplay(object):
     # SDF GENERATORS (circle / box / robot sphere / trail)
     # ==========================================================
     def _terrain_like_material(self):
-        """
-        Return a material block that visually matches terrain style:
-        uses Gazebo/Rocky with neutral grey-ish ambient/diffuse.
-        """
         return """\
         <material>
-          <script>
-            <uri>file://media/materials/scripts/gazebo.material</uri>
-            <name>Gazebo/Rocky</name>
-          </script>
-          <ambient>0.7 0.7 0.7 1</ambient>
-          <diffuse>0.7 0.7 0.7 1</diffuse>
-          <specular>0.1 0.1 0.1 1</specular>
+          <ambient>0.0 0.0 0.3 1</ambient>
+          <diffuse>0.0 0.8 0.8 1</diffuse>
+          <specular>0.2 0.2 0.4 1</specular>
           <emissive>0 0 0 1</emissive>
         </material>"""
 
@@ -350,6 +372,75 @@ class DynamicTrajectoryReplay(object):
 </sdf>
 """
         return sdf
+    def _make_sensor_shell_sdf(self, name):
+        """
+        Transparent spherical shell to visualize constant sensor range.
+        Purely visual (no collision).
+        """
+        r = self.sensor_shell_radius
+        a = self.sensor_shell_alpha
+        # Gazebo transparency: 0 = opaque, 1 = fully invisible
+        transparency = max(0.0, min(1.0, 1.0 - a))
+
+        return f"""<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="{name}">
+    <static>false</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry>
+          <sphere>
+            <radius>{r}</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <!-- cyan-ish shell -->
+          <ambient>0.0 0.6 1.0 {a}</ambient>
+          <diffuse>0.0 0.6 1.0 {a}</diffuse>
+          <specular>0.2 0.2 0.4 {a}</specular>
+          <emissive>0 0 0 1</emissive>
+        </material>
+        <transparency>{transparency}</transparency>
+      </visual>
+    </link>
+  </model>
+</sdf>
+"""
+    def _make_star_sdf(self, name):
+        """
+        Bright yellow 5-point star using a thin visual mesh.
+        Implemented as a scaled sphere + emissive material for visibility.
+        (Gazebo has no native star primitive.)
+        """
+        s = self.target_scale
+
+        sdf = f"""<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="{name}">
+    <static>true</static>
+    <link name="link">
+
+      <visual name="star_visual">
+        <geometry>
+          <sphere>
+            <radius>{0.4 * s}</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <ambient>1 1 0 1</ambient>
+          <diffuse>1 1 0 1</diffuse>
+          <specular>0.8 0.8 0.3 1</specular>
+          <emissive>0.6 0.6 0.0 1</emissive>
+        </material>
+      </visual>
+
+    </link>
+  </model>
+</sdf>
+"""
+        return sdf
+
+
 
     def _make_trail_sdf(self, name):
         """
@@ -480,6 +571,76 @@ class DynamicTrajectoryReplay(object):
                 )
             except rospy.ServiceException as e:
                 rospy.logerr("Failed to spawn robot '%s': %s", self.robot_name, str(e))
+                # Sensor shell around robot
+        if self.sensor_shell_enabled and self.robot_traj:
+            try:
+                resp = self.get_model_state(self.sensor_shell_name, "world")
+                if resp.success:
+                    rospy.loginfo("Sensor shell '%s' already exists in Gazebo.", self.sensor_shell_name)
+                else:
+                    raise rospy.ServiceException("not found")
+            except rospy.ServiceException:
+                gx0, gy0 = self.robot_traj[0]
+                wx0, wy0 = self.grid_to_world(gx0, gy0)
+                sdf_xml = self._make_sensor_shell_sdf(self.sensor_shell_name)
+
+                pose = Pose()
+                pose.position.x = wx0
+                pose.position.y = wy0
+                pose.position.z = self.z_base + self.robot_radius   # same center as robot
+                pose.orientation.w = 1.0
+
+                try:
+                    self.spawn_model(
+                        model_name=self.sensor_shell_name,
+                        model_xml=sdf_xml,
+                        robot_namespace=self.sensor_shell_name,
+                        initial_pose=pose,
+                        reference_frame="world",
+                    )
+                    rospy.loginfo("Spawned sensor shell '%s' (radius=%.2f m) at (%.3f, %.3f)",
+                                  self.sensor_shell_name, self.sensor_shell_radius, wx0, wy0)
+                except rospy.ServiceException as e:
+                    rospy.logerr("Failed to spawn sensor shell '%s': %s", self.sensor_shell_name, str(e))
+        # Target star
+        if not self.target_enabled:
+            return
+
+        if self.target_x is None or self.target_y is None:
+            rospy.logwarn("Target star disabled: no target params found.")
+            return
+
+        # Check if star already exists
+        try:
+            resp = self.get_model_state(self.target_name, "world")
+            if resp.success:
+                rospy.loginfo("Target star '%s' already exists.", self.target_name)
+                return
+        except rospy.ServiceException:
+            pass
+
+        rospy.loginfo("Spawning TARGET STAR at (%.3f, %.3f)",
+                    self.target_x, self.target_y)
+
+        sdf_xml = self._make_star_sdf(self.target_name)
+
+        pose = Pose()
+        pose.position.x = self.target_x
+        pose.position.y = self.target_y
+        pose.position.z = self.z_base + self.target_z
+        pose.orientation.w = 1.0
+
+        try:
+            self.spawn_model(
+                model_name=self.target_name,
+                model_xml=sdf_xml,
+                robot_namespace=self.target_name,
+                initial_pose=pose,
+                reference_frame="world",
+            )
+        except rospy.ServiceException as e:
+            rospy.logerr("Failed to spawn target star: %s", str(e))
+
 
     # ==========================================================
     # SEND MODEL STATE TO GAZEBO
@@ -519,6 +680,27 @@ class DynamicTrajectoryReplay(object):
             self.set_model_state(state)
         except rospy.ServiceException as e:
             rospy.logwarn("Failed to move robot '%s': %s", self.robot_name, str(e))
+
+    def send_sensor_shell_state(self, gx, gy):
+        if not self.sensor_shell_enabled:
+            return
+
+        wx, wy = self.grid_to_world(gx, gy)
+
+        state = ModelState()
+        state.model_name = self.sensor_shell_name
+        state.pose = Pose()
+        state.pose.position.x = wx
+        state.pose.position.y = wy
+        state.pose.position.z = self.z_base + self.robot_radius  # same center as robot
+        state.pose.orientation.w = 1.0
+        state.twist = Twist()
+        state.reference_frame = "world"
+
+        try:
+            self.set_model_state(state)
+        except rospy.ServiceException as e:
+            rospy.logwarn("Failed to move sensor shell '%s': %s", self.sensor_shell_name, str(e))
 
     # ==========================================================
     # TRAIL SPAWNING
@@ -628,6 +810,10 @@ class DynamicTrajectoryReplay(object):
                 gy_r = gy_r0 + alpha * (gy_r1 - gy_r0)
                 self.send_robot_state(gx_r, gy_r)
 
+                # Move sensor shell with robot
+                if self.sensor_shell_enabled:
+                    self.send_sensor_shell_state(gx_r, gy_r)
+
                 # Drop trail markers at stride intervals
                 if self.trail_enabled and (step_counter % self.trail_stride == 0):
                     self.spawn_trail_point_grid(gx_r, gy_r)
@@ -649,6 +835,8 @@ class DynamicTrajectoryReplay(object):
         if final_idx < len(self.robot_traj):
             gx_r, gy_r = self.robot_traj[final_idx]
             self.send_robot_state(gx_r, gy_r)
+            if self.sensor_shell_enabled:
+                self.send_sensor_shell_state(gx_r, gy_r)
             if self.trail_enabled:
                 self.spawn_trail_point_grid(gx_r, gy_r)
 

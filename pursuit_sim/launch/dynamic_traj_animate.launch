@@ -1,14 +1,30 @@
 <launch>
+
+  <!-- ========================= -->
+  <!-- GLOBAL MAP SWITCH         -->
+  <!-- ========================= -->
+  <arg name="map_id" default="map11"/>
+
+  <!-- ========================= -->
+  <!-- Derived paths             -->
+  <!-- ========================= -->
+
   <arg name="map_file"
-       default="$(find pursuit_planner)/maps/map3.txt" />
+       default="$(find pursuit_planner)/maps/$(arg map_id).txt" />
+
   <arg name="heightmap_png"
-       default="$(find pursuit_sim)/worlds/heightmap_map3.png" />
+       default="$(find pursuit_sim)/worlds/heightmap_$(arg map_id).png" />
+
   <arg name="world_path"
        default="$(find pursuit_sim)/worlds/terrain_world.world" />
 
+  <arg name="trajectory_file"
+       default="$(find pursuit_sim)/map_trajectories/$(arg map_id)/dynamic_trajectories.txt"/>
 
+  <arg name="dyno_yaml"
+       default="$(find pursuit_planner)/config/dyno_$(arg map_id).yaml"/>
 
-  !-- ========================= -->
+  <!-- ========================= -->
   <!-- 1) Generate heightmap    -->
   <!-- ========================= -->
 
@@ -17,7 +33,6 @@
         type="generate_heightmap.py"
         output="screen"
         respawn="false"
-        clear_params="false"
         args="$(arg map_file)
               --heightmap_png=$(arg heightmap_png)
               --world_path=$(arg world_path)
@@ -38,31 +53,33 @@
         type="gzclient"
         output="screen" />
 
+  <!-- ========================= -->
+  <!-- 3) Dynamic Animator      -->
+  <!-- ========================= -->
+
   <node pkg="pursuit_sim"
         type="dynamic_trajs_animator.py"
         name="dynamic_trajectory_animator"
         output="screen">
 
-    <!-- Adjust path if you want another map -->
-    <param name="trajectory_file"
-           value="$(find pursuit_sim)/map_trajectories/map3/dynamic_trajectories.txt"/>
+    <param name="trajectory_file" value="$(arg trajectory_file)"/>
+    <param name="dyno_yaml"        value="$(arg dyno_yaml)"/>
 
     <param name="meters_per_cell" value="1.0"/>
-
-    <param name="z_height" value="0.0"/>
+    <param name="z_height"        value="0.0"/>
     <param name="obstacle_height" value="5.0"/>
-    <param name="loop" value="false"/>
 
-    <!-- Repeat animation -->
-    <param name="loop" value="true"/>
+    <!-- Replay behavior -->
+    <param name="loop"         value="true"/>
     <param name="interp_rate" value="40.0"/>
-    <param name="replay_speed" value="10.0"/>
+    <param name="replay_speed" value="5.0"/>
+
+    <!-- Trail -->
     <param name="trail_enabled" value="true"/>
     <param name="trail_stride"  value="5"/>
     <param name="trail_radius"  value="0.3"/>
     <param name="trail_height"  value="0.05"/>
     <param name="trail_alpha"   value="0.4"/>
-
 
   </node>
 

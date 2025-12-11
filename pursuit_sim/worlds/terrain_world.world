@@ -42,11 +42,11 @@
 
     <!-- Point lights only: no sun -->
     <light type="point" name="point_light_center">
-      <pose>256.5 -256.5 30.0 0 0 0</pose>
+      <pose>16.5 -16.5 30.0 0 0 0</pose>
       <diffuse>1 1 1 1</diffuse>
       <specular>0.5 0.5 0.5 1</specular>
       <attenuation>
-        <range>513.0</range>
+        <range>33.0</range>
         <constant>0.4</constant>
         <linear>0.01</linear>
         <quadratic>0.001</quadratic>
@@ -55,11 +55,11 @@
     </light>
 
     <light type="point" name="point_light_north">
-      <pose>256.5 0 40.0 0 0 0</pose>
+      <pose>16.5 0 40.0 0 0 0</pose>
       <diffuse>0.9 0.9 1 1</diffuse>
       <specular>0.4 0.4 0.6 1</specular>
       <attenuation>
-        <range>513.0</range>
+        <range>33.0</range>
         <constant>0.5</constant>
         <linear>0.02</linear>
         <quadratic>0.002</quadratic>
@@ -68,11 +68,11 @@
     </light>
 
     <light type="point" name="point_light_south">
-      <pose>256.5 -513.0 40.0 0 0 0</pose>
+      <pose>16.5 -33.0 40.0 0 0 0</pose>
       <diffuse>1 0.95 0.9 1</diffuse>
       <specular>0.6 0.5 0.4 1</specular>
       <attenuation>
-        <range>513.0</range>
+        <range>33.0</range>
         <constant>0.5</constant>
         <linear>0.02</linear>
         <quadratic>0.002</quadratic>
@@ -88,9 +88,9 @@
         <collision name="terrain_collision">
           <geometry>
             <heightmap>
-              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>513.0 513.0 10.0</size>
-              <pos>256.5 -256.5 0</pos>
+              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map11.png</uri>
+              <size>33.0 33.0 10.0</size>
+              <pos>16.5 -16.5 0</pos>
             </heightmap>
           </geometry>
           <surface>
@@ -116,9 +116,9 @@
         <visual name="terrain_visual">
           <geometry>
             <heightmap>
-              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map3.png</uri>
-              <size>513.0 513.0 10.0</size>
-              <pos>256.5 -256.5 0</pos>
+              <uri>file:///home/hkou/Work/CMU_Biorobotics/eigenbot_ws/src/pursuit_planner/pursuit_sim/worlds/heightmap_map11.png</uri>
+              <size>33.0 33.0 10.0</size>
+              <pos>16.5 -16.5 0</pos>
 
               <!-- Base ground texture -->
               <texture>
